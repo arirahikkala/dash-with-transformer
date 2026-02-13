@@ -1,7 +1,16 @@
 import { TrigramModel } from "./trigram";
-import { type LanguageModel, type TokenProb, type Cursor } from "./cursor";
+import {
+  type LanguageModel,
+  type TokenProb,
+  type Cursor,
+  normalizeCursor,
+} from "./cursor";
 import { buildScene } from "./scene";
 import { renderScene, type RenderOptions } from "./render";
+
+// ---------------------------------------------------------------------------
+// Trigram adapter
+// ---------------------------------------------------------------------------
 
 /** Printable ASCII (32..126) plus newline (10). */
 function isPrintableOrNewline(code: number): boolean {
@@ -11,7 +20,6 @@ function isPrintableOrNewline(code: number): boolean {
 /** Wrap a TrigramModel as a generic LanguageModel<number>. */
 function wrapTrigramModel(trigram: TrigramModel): LanguageModel<number> {
   return (prefix: readonly number[]): readonly TokenProb<number>[] => {
-    // Build the 2-char context string from the last two tokens.
     let context: string;
     if (prefix.length === 0) {
       context = "  ";
@@ -25,7 +33,6 @@ function wrapTrigramModel(trigram: TrigramModel): LanguageModel<number> {
 
     const counts = trigram.predict(context);
 
-    // Collect printable + newline entries with positive counts.
     const entries: { token: number; count: number }[] = [];
     let total = 0;
     for (let c = 0; c < counts.length; c++) {
@@ -36,7 +43,6 @@ function wrapTrigramModel(trigram: TrigramModel): LanguageModel<number> {
     }
     if (total === 0) return [];
 
-    // Sort by char code (alphabetical top-to-bottom).
     entries.sort((a, b) => a.token - b.token);
 
     return entries.map((e) => ({
@@ -45,6 +51,10 @@ function wrapTrigramModel(trigram: TrigramModel): LanguageModel<number> {
     }));
   };
 }
+
+// ---------------------------------------------------------------------------
+// Render helpers
+// ---------------------------------------------------------------------------
 
 function labelFor(code: number): string {
   if (code === 32) return "\u25A1"; // □
@@ -57,31 +67,118 @@ function colorFor(code: number): string {
   return `hsl(${hue}, 45%, 35%)`;
 }
 
+function prefixToDisplayString(prefix: readonly number[]): string {
+  return prefix
+    .map((c) => {
+      if (c === 10) return "\u23CE";
+      return String.fromCharCode(c);
+    })
+    .join("");
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
+/**
+ * How many window-heights per second the cursor moves when the mouse
+ * is at the edge of the canvas.  With SPEED = 2, full traversal of
+ * the visible window takes ~1 second at maximum mouse offset.
+ */
+const SPEED = 2;
+
+/** Cap dt to avoid huge jumps when the tab regains focus. */
+const MAX_DT = 0.05;
+
 async function main() {
   const resp = await fetch("/model.bin");
   const buffer = await resp.arrayBuffer();
   const trigram = new TrigramModel(buffer);
   const model = wrapTrigramModel(trigram);
 
-  const prefix = "The cat";
-  const tokenPrefix = Array.from(prefix).map((ch) => ch.charCodeAt(0));
-
   const prefixEl = document.getElementById("prefix-display")!;
-  prefixEl.textContent = prefix;
-
   const canvas = document.getElementById("dasher-canvas") as HTMLCanvasElement;
   const ctx = canvas.getContext("2d")!;
-
-  // Cursor at the origin of the prefix's square = fully zoomed out
-  const cursor: Cursor<number> = { prefix: tokenPrefix, x: 0, y: 0 };
 
   const renderOpts: RenderOptions<number> = {
     label: labelFor,
     color: colorFor,
   };
 
-  const scene = buildScene(model, cursor, 0.01);
-  renderScene(ctx, scene, canvas.width, canvas.height, renderOpts);
+  // --- Cursor state ---
+  const initialPrefix = "";
+  const tokenPrefix = Array.from(initialPrefix).map((ch) => ch.charCodeAt(0));
+  let cursor: Cursor<number> = { prefix: tokenPrefix, x: 0.5, y: 0.5 };
+
+  // --- Mouse state ---
+  let mouseDown = false;
+  let mouseX = 0;
+  let mouseY = 0;
+
+  function updateMousePos(e: MouseEvent) {
+    const rect = canvas.getBoundingClientRect();
+    // Scale from CSS coords to canvas backing-store coords
+    mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+    mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+  }
+
+  canvas.addEventListener("mousedown", (e) => {
+    mouseDown = true;
+    updateMousePos(e);
+  });
+
+  canvas.addEventListener("mousemove", (e) => {
+    updateMousePos(e);
+  });
+
+  window.addEventListener("mouseup", () => {
+    mouseDown = false;
+  });
+
+  // --- Render ---
+  function render() {
+    const scene = buildScene(model, cursor, 0.005);
+    renderScene(ctx, scene, canvas.width, canvas.height, renderOpts);
+    prefixEl.textContent = prefixToDisplayString(cursor.prefix);
+  }
+
+  // --- Animation loop ---
+  let lastTime = performance.now();
+
+  function frame(now: number) {
+    const dt = Math.min((now - lastTime) / 1000, MAX_DT);
+    lastTime = now;
+
+    if (mouseDown) {
+      const w = canvas.width;
+      const h = canvas.height;
+
+      // Normalized displacement from center: [-1, 1] on each axis
+      const ndx = (mouseX - w / 2) / (w / 2);
+      const ndy = (mouseY - h / 2) / (h / 2);
+
+      // halfHeight = size of the window in the cursor's local frame
+      const halfHeight = 1 - cursor.x;
+
+      // Velocity in local frame, proportional to displacement and zoom
+      const dx = ndx * SPEED * halfHeight * dt;
+      const dy = ndy * SPEED * halfHeight * dt;
+
+      cursor = normalizeCursor(model, {
+        prefix: cursor.prefix,
+        x: cursor.x + dx,
+        y: cursor.y + dy,
+      });
+
+      render();
+    }
+
+    requestAnimationFrame(frame);
+  }
+
+  // Initial render, then start loop
+  render();
+  requestAnimationFrame(frame);
 }
 
 main();

@@ -1,43 +1,6 @@
 /**
  * Cursor normalization for the Dasher unit-square model.
- *
- * Geometric model
- * ===============
- * An autoregressive language model induces a recursive tiling of the unit
- * square [0,1]×[0,1].  Every text prefix p maps to a *square*:
- *
- *   width = height = P(p)          (joint probability of the prefix)
- *   right edge at x = 1
- *   left  edge at x = 1 − P(p)
- *   y-position determined by cumulative conditional probabilities
- *
- * Inside each square, the next-token distribution carves out child squares
- * stacked vertically (in the order the model returns them).  A child for
- * token c with conditional probability p_c occupies, in the *parent's*
- * normalised [0,1]×[0,1] coordinate frame:
- *
- *   x ∈ [1 − p_c,  1]
- *   y ∈ [cumBefore,  cumBefore + p_c]
- *
- * Because every child is narrower than its parent (unless p_c = 1), there is
- * a "gap" on the left side of every square that no child covers.
- *
- * Cursor
- * ============
- * A cursor is (prefix, x, y) where x and y are in the current square's
- * normalised frame:  x = 0 is the left edge, y = 0 is the top edge.
- *
- * The normaliser finds the *smallest* (deepest) square that contains the
- * cursor, adjusting the prefix and (x,y) so that the global position is
- * preserved.
- *
- * Precision
- * =========
- * All intermediate arithmetic uses exact rationals (BigInt numerator /
- * denominator) via ../rational.ts.  Since every IEEE-754 float is a dyadic
- * rational, the ascent and descent coordinate transforms are *exact*
- * inverses — no error accumulates regardless of tree depth.  The final
- * (x, y) is rounded back to float64 only at the very end.
+ * See CLAUDE.md for the geometric model and core math concepts.
  */
 
 import {
