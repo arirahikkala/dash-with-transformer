@@ -1,0 +1,3 @@
+A modernized Dasher, an information-theory-based input method. The user navigates into the Library of Babel, that is, the set of all possible strings, which is organized by length from left to right, and alphabetically from top to bottom.
+
+Currently a typical Vite TypeScript frontend-only project with a simple trigram next-character model. Planned to be built up into being backed with a proper LLM.
