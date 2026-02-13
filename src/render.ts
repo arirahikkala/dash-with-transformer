@@ -1,17 +1,20 @@
 import { Scene, SceneNode } from "./scene";
 
-/** Stable hue derived from a character code (golden-angle spread). */
-function nodeColor(charCode: number): string {
-  const hue = (charCode * 137.508) % 360;
-  return `hsl(${hue}, 45%, 35%)`;
+/** Callbacks for rendering tokens of type T. */
+export interface RenderOptions<T> {
+  /** Display label for a token. */
+  label: (token: T) => string;
+  /** CSS color string for a token. */
+  color: (token: T) => string;
 }
 
 /** Render nodes as right-aligned squares, parent first then children on top. */
-function renderNodes(
+function renderNodes<T>(
   ctx: CanvasRenderingContext2D,
-  nodes: SceneNode[],
+  nodes: SceneNode<T>[],
   width: number,
   height: number,
+  opts: RenderOptions<T>,
 ): void {
   for (const node of nodes) {
     const py0 = node.y0 * height;
@@ -20,7 +23,7 @@ function renderNodes(
     const x0 = width - side;
 
     // Colored square, right-aligned
-    ctx.fillStyle = nodeColor(node.charCode);
+    ctx.fillStyle = opts.color(node.token);
     ctx.fillRect(x0, py0, side, side);
 
     // Subtle border at the top
@@ -38,30 +41,31 @@ function renderNodes(
       ctx.fillStyle = "#e0e0e0";
       ctx.textBaseline = "middle";
       ctx.textAlign = "left";
-      ctx.fillText(node.label, x0 + 4, py0 + side / 2);
+      ctx.fillText(opts.label(node.token), x0 + 4, py0 + side / 2);
     }
 
     // Children paint on top (smaller squares nested inside)
-    renderNodes(ctx, node.children, width, height);
+    renderNodes(ctx, node.children, width, height, opts);
   }
 }
 
 /** Render a Scene onto a 2D canvas. */
-export function renderScene(
+export function renderScene<T>(
   ctx: CanvasRenderingContext2D,
-  scene: Scene,
+  scene: Scene<T>,
   width: number,
   height: number,
+  opts: RenderOptions<T>,
 ): void {
-  // Dark background — gaps show through as dark space.
+  // Dark background — gaps and out-of-bounds areas show through as dark space.
   ctx.fillStyle = "#1a1a2e";
   ctx.fillRect(0, 0, width, height);
 
-  renderNodes(ctx, scene.children, width, height);
+  renderNodes(ctx, scene.children, width, height, opts);
 
-  // -- Crosshairs (drawn last, on top of everything) --
-  const cx = scene.crosshairs.x * width;
-  const cy = scene.crosshairs.y * height;
+  // -- Crosshairs (always at canvas center) --
+  const cx = width / 2;
+  const cy = height / 2;
 
   ctx.strokeStyle = "rgba(255, 60, 60, 0.8)";
   ctx.lineWidth = 1.5;
