@@ -6,7 +6,10 @@
       "Bash(npx tsc:*)",
       "Bash(ln:*)",
       "Bash(npx vite build:*)",
-      "Bash(npx vitest:*)"
+      "Bash(npx vitest:*)",
+      "WebSearch",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:github.com)"
     ]
   },
   "sandbox": {
