@@ -3,7 +3,7 @@ import {
   normalizeCursor,
   cursorToGlobal,
   type LanguageModel,
-  type CursorState,
+  type Cursor,
 } from "./cursor";
 
 // ---------------------------------------------------------------------------
@@ -62,8 +62,8 @@ const empty: LanguageModel<string> = () => [];
 /** Assert that two cursor states point at the same global location. */
 function expectSameGlobal<T>(
   model: LanguageModel<T>,
-  a: CursorState<T>,
-  b: CursorState<T>,
+  a: Cursor<T>,
+  b: Cursor<T>,
   tokenEquals?: (x: T, y: T) => boolean,
 ) {
   const ga = cursorToGlobal(model, a, tokenEquals);
@@ -270,7 +270,7 @@ describe("normalizeCursor", () => {
     const cases: Array<{
       name: string;
       model: LanguageModel<string>;
-      state: CursorState<string>;
+      state: Cursor<string>;
     }> = [
       {
         name: "simple descent",
@@ -421,7 +421,7 @@ describe("normalizeCursor", () => {
       const prefix = Array<string>(depth).fill("A");
       // y = 1.0 + tiny nudge → just past the bottom of the A square at
       // every ancestor, forcing a full climb to root.
-      const state: CursorState<string> = {
+      const state: Cursor<string> = {
         prefix,
         x: 0.3,
         y: 1.0 + 1e-10,
@@ -433,7 +433,7 @@ describe("normalizeCursor", () => {
     it("deep round-trip: ascend 50 levels with asymmetric model", () => {
       const depth = 50;
       const prefix = Array<string>(depth).fill("A");
-      const state: CursorState<string> = {
+      const state: Cursor<string> = {
         prefix,
         x: 0.3,
         y: 1.0 + 0.001,
@@ -457,7 +457,7 @@ describe("normalizeCursor", () => {
       // This forces 30 ascents and 30 descents through a different branch.
       const depth = 30;
       const prefix = Array<string>(depth).fill("B");
-      const state: CursorState<string> = {
+      const state: Cursor<string> = {
         prefix,
         x: 0.3,
         y: -0.001, // just above B → enters A
@@ -480,7 +480,7 @@ describe("normalizeCursor", () => {
 
       // Nest 15 deep in "j" (prob 0.27), then nudge into "a".
       const prefix = Array<string>(15).fill("j");
-      const state: CursorState<string> = {
+      const state: Cursor<string> = {
         prefix,
         x: 0.4,
         y: -0.01,

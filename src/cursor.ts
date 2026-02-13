@@ -22,7 +22,7 @@
  * Because every child is narrower than its parent (unless p_c = 1), there is
  * a "gap" on the left side of every square that no child covers.
  *
- * Cursor state
+ * Cursor
  * ============
  * A cursor is (prefix, x, y) where x and y are in the current square's
  * normalised frame:  x = 0 is the left edge, y = 0 is the top edge.
@@ -75,8 +75,8 @@ export type LanguageModel<T> = (
   prefix: readonly T[],
 ) => readonly TokenProb<T>[];
 
-/** Cursor state: a discrete prefix plus a continuous adjustment. */
-export interface CursorState<T> {
+/** Cursor: a discrete prefix plus a continuous adjustment. */
+export interface Cursor<T> {
   readonly prefix: readonly T[];
   /** 0 = left edge of the prefix's square, 1 = right edge. */
   readonly x: number;
@@ -108,9 +108,9 @@ export interface NormalizeOptions<T> {
  */
 export function normalizeCursor<T>(
   model: LanguageModel<T>,
-  state: CursorState<T>,
+  state: Cursor<T>,
   options?: NormalizeOptions<T>,
-): CursorState<T> {
+): Cursor<T> {
   const maxDepth = options?.maxDepth ?? 100;
   const tokEq = options?.tokenEquals ?? ((a: T, b: T): boolean => a === b);
 
@@ -189,18 +189,18 @@ export function normalizeCursor<T>(
 }
 
 // ---------------------------------------------------------------------------
-// Helper: convert cursor state to global unit-square coordinates
+// Helper: convert cursor to global unit-square coordinates
 // ---------------------------------------------------------------------------
 
 /**
- * Map a cursor state to global (x, y) in the unit square.
+ * Map a cursor to global (x, y) in the unit square.
  *
  * Uses exact rational arithmetic internally, returns float64.
  * Useful for verifying that normalisation preserves position.
  */
 export function cursorToGlobal<T>(
   model: LanguageModel<T>,
-  state: CursorState<T>,
+  state: Cursor<T>,
   tokenEquals?: (a: T, b: T) => boolean,
 ): { x: number; y: number } {
   const eq = tokenEquals ?? ((a: T, b: T): boolean => a === b);
