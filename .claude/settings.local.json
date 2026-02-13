@@ -5,7 +5,8 @@
       "Bash(npm install:*)",
       "Bash(npx tsc:*)",
       "Bash(ln:*)",
-      "Bash(npx vite build:*)"
+      "Bash(npx vite build:*)",
+      "Bash(npx vitest:*)"
     ]
   },
   "sandbox": {
