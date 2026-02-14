@@ -7,7 +7,7 @@ export class TrigramModel {
   constructor(buffer: ArrayBuffer) {
     if (buffer.byteLength !== N * N * N * 4) {
       throw new Error(
-        `Expected buffer of ${N * N * N * 4} bytes, got ${buffer.byteLength}`
+        `Expected buffer of ${N * N * N * 4} bytes, got ${buffer.byteLength}`,
       );
     }
     this.data = new Uint32Array(buffer);

@@ -102,7 +102,6 @@ describe("buildScene", () => {
       }
       await checkBounds(scene.children);
     });
-
   });
 
   // -- Window bounds --
@@ -230,7 +229,7 @@ describe("buildScene", () => {
         let d = 0;
         for (const n of nodes) {
           const children = await n.children;
-          d = Math.max(d, 1 + await measureDepth(children));
+          d = Math.max(d, 1 + (await measureDepth(children)));
         }
         return d;
       }
@@ -244,7 +243,7 @@ describe("buildScene", () => {
         let d = 0;
         for (const n of nodes) {
           const children = await n.children;
-          d = Math.max(d, 1 + await measureDepth(children));
+          d = Math.max(d, 1 + (await measureDepth(children)));
         }
         return d;
       }
@@ -307,13 +306,15 @@ describe("buildScene", () => {
 
     it("deterministic model stops at maxDepth", async () => {
       const cursor: Cursor<string> = { prefix: [], x: 0, y: 0.5 };
-      const scene = await buildScene(deterministic, cursor, 0.0001, { maxDepth: 5 });
+      const scene = await buildScene(deterministic, cursor, 0.0001, {
+        maxDepth: 5,
+      });
       // The single token has probability 1, so it recurses until maxDepth.
       async function measureDepth(nodes: SceneNode<string>[]): Promise<number> {
         let d = 0;
         for (const n of nodes) {
           const children = await n.children;
-          d = Math.max(d, 1 + await measureDepth(children));
+          d = Math.max(d, 1 + (await measureDepth(children)));
         }
         return d;
       }

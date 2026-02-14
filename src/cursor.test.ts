@@ -147,7 +147,11 @@ describe("normalizeCursor", () => {
       // After A: A=0.3 y∈[0,0.3), B=0.7 y∈[0.3,1).
       //   x=0.5≥0.3, y=1/3≥0.3 → enter B.
       //   new: x=(0.5−0.3)/0.7=2/7, y=(1/3−0.3)/0.7=1/21
-      const r = await normalizeCursor(contextual, { prefix: [], x: 0.7, y: 0.2 });
+      const r = await normalizeCursor(contextual, {
+        prefix: [],
+        x: 0.7,
+        y: 0.2,
+      });
       expect(r.prefix).toEqual(["A", "B"]);
       expect(r.x).toBeCloseTo(2 / 7);
       expect(r.y).toBeCloseTo(1 / 21);

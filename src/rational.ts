@@ -97,7 +97,7 @@ export function fromFloat(x: number): Rat {
   const bits = _u64[0];
 
   const sign = bits >> 63n;
-  const expBiased = Number((bits >> 52n) & 0x7FFn);
+  const expBiased = Number((bits >> 52n) & 0x7ffn);
   let mantissa = bits & ((1n << 52n) - 1n);
   let exp: number;
 

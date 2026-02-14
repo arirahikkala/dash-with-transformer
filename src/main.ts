@@ -15,7 +15,9 @@ function isPrintableOrNewline(code: number): boolean {
 
 /** Wrap a TrigramModel as a generic LanguageModel<number>. */
 function wrapTrigramModel(trigram: TrigramModel): LanguageModel<number> {
-  return async (prefix: readonly number[]): Promise<readonly TokenProb<number>[]> => {
+  return async (
+    prefix: readonly number[],
+  ): Promise<readonly TokenProb<number>[]> => {
     let context: string;
     if (prefix.length === 0) {
       context = "  ";
@@ -137,7 +139,14 @@ async function main() {
   async function render(signal: AbortSignal) {
     const scene = await buildScene(model, cursor, 0.005);
     if (signal.aborted) return;
-    await renderScene(ctx, scene, canvas.width, canvas.height, renderOpts, signal);
+    await renderScene(
+      ctx,
+      scene,
+      canvas.width,
+      canvas.height,
+      renderOpts,
+      signal,
+    );
   }
 
   // --- Monotonic normalizeCursor ---

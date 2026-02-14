@@ -169,7 +169,8 @@ export async function buildScene<T>(
   options?: BuildSceneOptions,
 ): Promise<Scene<T>> {
   const maxD = options?.maxDepth ?? 100;
-  const tokEq = (options?.tokenEquals as (a: T, b: T) => boolean) ??
+  const tokEq =
+    (options?.tokenEquals as (a: T, b: T) => boolean) ??
     ((a: T, b: T): boolean => a === b);
 
   // Phase 1: Window bounds in cursor-local frame
