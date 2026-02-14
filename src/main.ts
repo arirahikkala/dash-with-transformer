@@ -180,8 +180,11 @@ async function main() {
       const halfHeight = 1 - cursor.x;
 
       // Velocity in local frame, proportional to displacement and zoom
-      const dx = ndx * SPEED * halfHeight * dt;
+      let dx = ndx * SPEED * halfHeight * dt;
       const dy = ndy * SPEED * halfHeight * dt;
+
+      // Going left (backward) is easy/safe, so let the user go fast
+      if (dx < 0) dx *= 4;
 
       updateAndRender(dx, dy);
     }

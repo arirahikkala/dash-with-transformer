@@ -1,6 +1,9 @@
 A modernized Dasher, an information-theory-based input method.
 
-Dasher implements a mapping between a language model (as the set of all strings that can be sampled from it, along with their probabilities) and a unit square. The strings are organized by length from left to right and alphabetically from top to bottom. The intent is for users to be able to input strings by "gliding" rightward into the language model.
+Dasher implements a mapping between a language model (as the set of all strings that can be sampled from it, along with
+their probabilities) and a unit square. The strings are organized by length from left to right and alphabetically from
+top to bottom. The intent is for users to be able to input strings by "gliding" rightward into the language model,
+choosing the sentence's content by going up or downward, and correcting mistakes by going leftward.
 
 Currently implement as a Vite TypeScript frontend-only project. The language model is a character Markov trigram model (`model.bin`), planned to be swapped for a proper LLM later.
 
@@ -41,7 +44,9 @@ The cursor's position outside of these calculations is kept in machine floats, s
 
 ## Scene builder
 
-The visible window is a square centered on the cursor with its right edge at x=1 (this is sufficient to fully describe the displayed area). buildScene in scene.ts finds the tree of SceneNodeS within the window, allowing 
+The visible window is a square centered on the cursor with its right edge at x=1 (this is sufficient to fully describe
+the displayed area). buildScene in scene.ts finds the tree of SceneNodeS within the window. Since technically
+arbitrarily distantly related nodes might be visible within the window, it has to do recursive ascent/descent as well.
 
 ## Architecture
 
