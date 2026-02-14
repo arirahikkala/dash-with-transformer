@@ -1,3 +1,5 @@
+import type { LanguageModel, TokenProb } from "./types";
+
 const N = 128;
 
 export class TrigramModel {
@@ -31,4 +33,82 @@ export class TrigramModel {
     const slice = this.data.subarray(offset, offset + N);
     return Array.from(slice);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Trigram adapter
+// ---------------------------------------------------------------------------
+
+/** Printable ASCII (32..126) plus newline (10). */
+function isPrintableOrNewline(code: number): boolean {
+  return code === 10 || (code >= 32 && code <= 126);
+}
+
+/** Wrap a TrigramModel as a generic LanguageModel<number>. */
+function wrapTrigramModel(trigram: TrigramModel): LanguageModel<number> {
+  return async (
+    prefix: readonly number[],
+  ): Promise<readonly TokenProb<number>[]> => {
+    let context: string;
+    if (prefix.length === 0) {
+      context = "  ";
+    } else if (prefix.length === 1) {
+      context = " " + String.fromCharCode(prefix[0]);
+    } else {
+      const a = prefix[prefix.length - 2];
+      const b = prefix[prefix.length - 1];
+      context = String.fromCharCode(a) + String.fromCharCode(b);
+    }
+
+    const counts = trigram.predict(context);
+
+    const entries: { token: number; count: number }[] = [];
+    let total = 0;
+    for (let c = 0; c < counts.length; c++) {
+      if (!isPrintableOrNewline(c)) continue;
+      if (counts[c] <= 0) continue;
+      entries.push({ token: c, count: counts[c] });
+      total += counts[c];
+    }
+    if (total === 0) return [];
+
+    entries.sort((a, b) => a.token - b.token);
+
+    return entries.map((e) => ({
+      token: e.token,
+      probability: e.count / total,
+    }));
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Render helpers for char-code tokens
+// ---------------------------------------------------------------------------
+
+export function labelFor(code: number): string {
+  if (code === 32) return "\u25A1"; // □
+  if (code === 10) return "\u23CE"; // ⏎
+  return String.fromCharCode(code);
+}
+
+export function colorFor(code: number): string {
+  const hue = (code * 137.508) % 360;
+  return `hsl(${hue}, 45%, 35%)`;
+}
+
+export function prefixToDisplayString(prefix: readonly number[]): string {
+  return prefix
+    .map((c) => {
+      if (c === 10) return "\u23CE";
+      return String.fromCharCode(c);
+    })
+    .join("");
+}
+
+/** Fetch and load the trigram model, returning a LanguageModel<number>. */
+export async function loadTrigramModel(): Promise<LanguageModel<number>> {
+  const resp = await fetch("/model.bin");
+  const buffer = await resp.arrayBuffer();
+  const trigram = new TrigramModel(buffer);
+  return wrapTrigramModel(trigram);
 }
