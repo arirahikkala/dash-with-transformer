@@ -9,7 +9,8 @@
       "Bash(npx vitest:*)",
       "WebSearch",
       "WebFetch(domain:www.npmjs.com)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(npx:*)"
     ]
   },
   "sandbox": {

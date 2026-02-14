@@ -21,31 +21,7 @@ import {
   toFloat,
 } from "./rational";
 
-import { type LanguageModel, type Cursor } from "./cursor";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-/** A node in the recursive prediction tree. */
-export interface SceneNode<T> {
-  /** The token this node represents. */
-  token: T;
-  /** Top edge in window-relative coordinates [0,1]. */
-  y0: number;
-  /** Bottom edge in window-relative coordinates [0,1]. */
-  y1: number;
-  /** Recursively expanded children (next-token predictions). */
-  children: SceneNode<T>[];
-}
-
-/** Everything needed to render one frame of the widget. */
-export interface Scene<T> {
-  /** Top-level prediction nodes. */
-  children: SceneNode<T>[];
-  /** Maximum tree depth, for the renderer to size columns. */
-  depth: number;
-}
+import type { LanguageModel, Cursor, SceneNode, Scene } from "./types";
 
 // ---------------------------------------------------------------------------
 // Phase 2: Ascend to scene root (Rat arithmetic)
@@ -168,20 +144,6 @@ function buildChildren<T>(
 }
 
 // ---------------------------------------------------------------------------
-// Depth measurement
-// ---------------------------------------------------------------------------
-
-/** Walk the tree to find its maximum depth. */
-function maxDepth<T>(nodes: SceneNode<T>[]): number {
-  let d = 0;
-  for (const node of nodes) {
-    const childDepth = maxDepth(node.children);
-    d = Math.max(d, 1 + childDepth);
-  }
-  return d;
-}
-
-// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -245,5 +207,5 @@ export function buildScene<T>(
     maxD,
   );
 
-  return { children, depth: maxDepth(children) };
+  return { children };
 }

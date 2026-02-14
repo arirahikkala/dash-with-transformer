@@ -1,10 +1,6 @@
 import { describe, it, expect } from "vitest";
-import {
-  normalizeCursor,
-  cursorToGlobal,
-  type LanguageModel,
-  type Cursor,
-} from "./cursor";
+import type { LanguageModel, Cursor } from "./types";
+import { normalizeCursor, cursorToGlobal } from "./cursor";
 
 // ---------------------------------------------------------------------------
 // Test language models

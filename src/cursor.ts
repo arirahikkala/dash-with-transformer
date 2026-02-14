@@ -17,35 +17,7 @@ import {
   toFloat,
 } from "./rational";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-/**
- * One entry in a next-token probability distribution.
- * The order of entries determines the top-to-bottom layout.
- */
-export interface TokenProb<T> {
-  readonly token: T;
-  readonly probability: number;
-}
-
-/**
- * A language model: given a prefix, return the next-token distribution.
- * Probabilities must be positive and sum to 1.
- */
-export type LanguageModel<T> = (
-  prefix: readonly T[],
-) => readonly TokenProb<T>[];
-
-/** Cursor: a discrete prefix plus a continuous adjustment. */
-export interface Cursor<T> {
-  readonly prefix: readonly T[];
-  /** 0 = left edge of the prefix's square, 1 = right edge. */
-  readonly x: number;
-  /** 0 = top edge of the prefix's square, 1 = bottom edge. */
-  readonly y: number;
-}
+import type { LanguageModel, Cursor } from "./types";
 
 export interface NormalizeOptions<T> {
   /** Stop descending when prefix reaches this length.  Default 100. */

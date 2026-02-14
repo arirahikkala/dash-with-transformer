@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildScene, type SceneNode, type Scene } from "./scene";
-import { type LanguageModel, type Cursor } from "./cursor";
+import type { LanguageModel, Cursor, SceneNode, Scene } from "./types";
+import { buildScene } from "./scene";
 
 // ---------------------------------------------------------------------------
 // Test language models (same as cursor.test.ts)
@@ -102,19 +102,6 @@ describe("buildScene", () => {
       checkBounds(scene.children);
     });
 
-    it("depth field matches actual tree depth", () => {
-      const cursor: Cursor<string> = { prefix: [], x: 0, y: 0.5 };
-      const scene = buildScene(binary, cursor, 0.001);
-
-      function measureDepth(nodes: SceneNode<string>[]): number {
-        let d = 0;
-        for (const n of nodes) {
-          d = Math.max(d, 1 + measureDepth(n.children));
-        }
-        return d;
-      }
-      expect(scene.depth).toBe(measureDepth(scene.children));
-    });
   });
 
   // -- Window bounds --
@@ -238,15 +225,27 @@ describe("buildScene", () => {
       // Level 0: absProb=1, p=0.5 → childAbsProb=0.5 ≥ 0.2 → kept
       // Level 1: absProb=0.5, p=0.5 → childAbsProb=0.25 ≥ 0.2 → kept
       // Level 2: absProb=0.25, p=0.5 → childAbsProb=0.125 < 0.2 → culled
-      // So depth should be 2
-      expect(scene.depth).toBe(2);
+      function measureDepth(nodes: SceneNode<string>[]): number {
+        let d = 0;
+        for (const n of nodes) {
+          d = Math.max(d, 1 + measureDepth(n.children));
+        }
+        return d;
+      }
+      expect(measureDepth(scene.children)).toBe(2);
     });
 
     it("very small minHeight allows deep recursion", () => {
       const cursor: Cursor<string> = { prefix: [], x: 0, y: 0.5 };
       const scene = buildScene(binary, cursor, 0.0001);
-      // Should recurse many levels
-      expect(scene.depth).toBeGreaterThan(5);
+      function measureDepth(nodes: SceneNode<string>[]): number {
+        let d = 0;
+        for (const n of nodes) {
+          d = Math.max(d, 1 + measureDepth(n.children));
+        }
+        return d;
+      }
+      expect(measureDepth(scene.children)).toBeGreaterThan(5);
     });
   });
 
@@ -300,14 +299,20 @@ describe("buildScene", () => {
       const cursor: Cursor<string> = { prefix: [], x: 0, y: 0.5 };
       const scene = buildScene(empty, cursor, 0.01);
       expect(scene.children).toEqual([]);
-      expect(scene.depth).toBe(0);
     });
 
     it("deterministic model stops at maxDepth", () => {
       const cursor: Cursor<string> = { prefix: [], x: 0, y: 0.5 };
       const scene = buildScene(deterministic, cursor, 0.0001, { maxDepth: 5 });
       // The single token has probability 1, so it recurses until maxDepth.
-      expect(scene.depth).toBe(5);
+      function measureDepth(nodes: SceneNode<string>[]): number {
+        let d = 0;
+        for (const n of nodes) {
+          d = Math.max(d, 1 + measureDepth(n.children));
+        }
+        return d;
+      }
+      expect(measureDepth(scene.children)).toBe(5);
     });
 
     it("works with numeric token types", () => {

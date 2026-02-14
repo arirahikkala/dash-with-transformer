@@ -1,4 +1,4 @@
-import { Scene, SceneNode } from "./scene";
+import type { Scene, SceneNode } from "./types";
 
 /** Callbacks for rendering tokens of type T. */
 export interface RenderOptions<T> {

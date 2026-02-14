@@ -1,10 +1,6 @@
+import type { LanguageModel, TokenProb, Cursor } from "./types";
 import { TrigramModel } from "./trigram";
-import {
-  type LanguageModel,
-  type TokenProb,
-  type Cursor,
-  normalizeCursor,
-} from "./cursor";
+import { normalizeCursor } from "./cursor";
 import { buildScene } from "./scene";
 import { renderScene, type RenderOptions } from "./render";
 

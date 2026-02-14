@@ -43,15 +43,9 @@ The cursor's position outside of these calculations is kept in machine floats, s
 
 The visible window is a square centered on the cursor with its right edge at x=1 (this is sufficient to fully describe the displayed area). buildScene in scene.ts finds the tree of SceneNodeS within the window, allowing 
 
-## Key types
-
-- `LanguageModel<T>`: `(prefix: T[]) → TokenProb<T>[]` — generic over token type
-- `Cursor<T>`: `{ prefix: T[], x: number, y: number }`
-- `SceneNode<T>`: `{ token: T, y0: number, y1: number, children: SceneNode<T>[] }`
-- `RenderOptions<T>`: `{ label: (T) → string, color: (T) → string }`
-
 ## Architecture
 
+- `src/types.ts` - central types
 - `src/rational.ts` — exact BigInt rational arithmetic
 - `src/cursor.ts` — cursor type, normalization (ascent/descent)
 - `src/scene.ts` — `buildScene`: window computation, ascent, recursive descent
