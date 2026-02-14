@@ -1,13 +1,8 @@
 import type { Cursor } from "./types";
-import {
-  loadTrigramModel,
-  labelFor,
-  colorFor,
-  prefixToDisplayString,
-} from "./trigram";
+import { loadTrigramModel } from "./trigram";
 import { normalizeCursor } from "./cursor";
 import { buildScene } from "./scene";
-import { renderScene, type RenderOptions } from "./render";
+import { renderScene } from "./render";
 
 // ---------------------------------------------------------------------------
 // Main
@@ -24,21 +19,14 @@ const SPEED = 2;
 const MAX_DT = 0.05;
 
 async function main() {
-  const model = await loadTrigramModel();
+  const { model, display } = await loadTrigramModel();
 
   const prefixEl = document.getElementById("prefix-display")!;
   const canvas = document.getElementById("dasher-canvas") as HTMLCanvasElement;
   const ctx = canvas.getContext("2d")!;
 
-  const renderOpts: RenderOptions<number> = {
-    label: labelFor,
-    color: colorFor,
-  };
-
   // --- Cursor state ---
-  const initialPrefix = "";
-  const tokenPrefix = Array.from(initialPrefix).map((ch) => ch.charCodeAt(0));
-  let cursor: Cursor<number> = { prefix: tokenPrefix, x: 0.5, y: 0.5 };
+  let cursor: Cursor<number> = { prefix: [], x: 0.5, y: 0.5 };
 
   // --- Mouse state ---
   let mouseDown = false;
@@ -71,14 +59,7 @@ async function main() {
   async function render(signal: AbortSignal) {
     const scene = await buildScene(model, cursor, 0.005);
     if (signal.aborted) return;
-    await renderScene(
-      ctx,
-      scene,
-      canvas.width,
-      canvas.height,
-      renderOpts,
-      signal,
-    );
+    await renderScene(ctx, scene, canvas.width, canvas.height, display, signal);
   }
 
   // --- Monotonic normalizeCursor ---
@@ -95,7 +76,7 @@ async function main() {
 
     if (version !== normalizeVersion) return;
     cursor = newCursor;
-    prefixEl.textContent = prefixToDisplayString(cursor.prefix);
+    prefixEl.textContent = display.prefixToString(cursor.prefix);
 
     renderController?.abort();
     renderController = new AbortController();

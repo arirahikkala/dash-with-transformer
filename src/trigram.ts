@@ -1,4 +1,4 @@
-import type { LanguageModel, TokenProb } from "./types";
+import type { LanguageModel, TokenDisplay, TokenProb } from "./types";
 
 const N = 128;
 
@@ -85,18 +85,18 @@ function wrapTrigramModel(trigram: TrigramModel): LanguageModel<number> {
 // Render helpers for char-code tokens
 // ---------------------------------------------------------------------------
 
-export function labelFor(code: number): string {
+function labelFor(code: number): string {
   if (code === 32) return "\u25A1"; // □
   if (code === 10) return "\u23CE"; // ⏎
   return String.fromCharCode(code);
 }
 
-export function colorFor(code: number): string {
+function colorFor(code: number): string {
   const hue = (code * 137.508) % 360;
   return `hsl(${hue}, 45%, 35%)`;
 }
 
-export function prefixToDisplayString(prefix: readonly number[]): string {
+function prefixToDisplayString(prefix: readonly number[]): string {
   return prefix
     .map((c) => {
       if (c === 10) return "\u23CE";
@@ -105,10 +105,16 @@ export function prefixToDisplayString(prefix: readonly number[]): string {
     .join("");
 }
 
-/** Fetch and load the trigram model, returning a LanguageModel<number>. */
-export async function loadTrigramModel(): Promise<LanguageModel<number>> {
+/** Fetch and load the trigram model. */
+export async function loadTrigramModel() {
   const resp = await fetch("/model.bin");
   const buffer = await resp.arrayBuffer();
   const trigram = new TrigramModel(buffer);
-  return wrapTrigramModel(trigram);
+  const model: LanguageModel<number> = wrapTrigramModel(trigram);
+  const display: TokenDisplay<number> = {
+    label: labelFor,
+    color: colorFor,
+    prefixToString: prefixToDisplayString,
+  };
+  return { model, display };
 }

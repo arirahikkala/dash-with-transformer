@@ -93,11 +93,7 @@ async function ascendToSceneRoot<T>(
 
   // Check if the window already fits at the starting level with
   // left corners covered by children.
-  if (
-    mutablePrefix.length > 0 &&
-    gte(winTop, ZERO) &&
-    gte(ONE, winBot)
-  ) {
+  if (mutablePrefix.length > 0 && gte(winTop, ZERO) && gte(ONE, winBot)) {
     const dist = await model(mutablePrefix);
     if (leftCornersInsideChildren(dist, toFloat(winTop), toFloat(winBot))) {
       return {

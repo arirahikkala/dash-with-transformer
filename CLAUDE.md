@@ -18,14 +18,14 @@ There are basically two hard things that the front-end does:
 
 To describe the mapping more precisely:
 
-An autoregressive language model induces a recursive tiling of the unit square [0,1]×[0,1]. Every text prefix p maps to a *square*:
+An autoregressive language model induces a recursive tiling of the unit square [0,1]×[0,1]. Every text prefix p maps to a _square_:
 
     width = height = P(p)          (joint probability of the prefix)
     right edge at x = 1
     left  edge at x = 1 − P(p)
     y-position determined by cumulative conditional probabilities
 
-Inside each square, the next-token distribution carves out child squares stacked vertically (in the order the model returns them). A child for token c with conditional probability p_c occupies, in the *parent's* normalised [0,1]×[0,1] coordinate frame:
+Inside each square, the next-token distribution carves out child squares stacked vertically (in the order the model returns them). A child for token c with conditional probability p*c occupies, in the \_parent's* normalised [0,1]×[0,1] coordinate frame:
 
     x ∈ [1 − p_c, 1]
     y ∈ [cumBefore, cumBefore + p_c]
@@ -53,7 +53,7 @@ arbitrarily distantly related nodes might be visible within the window, it has t
 - `src/types.ts` - central types
 - `src/rational.ts` — exact BigInt rational arithmetic
 - `src/cursor.ts` — cursor type, normalization (ascent/descent)
-- `src/scene.ts` — `buildScene`: window computation, ascent, recursive descent
-- `src/render.ts` — `renderScene`: generic canvas renderer with label/color callbacks
+- `src/scene.ts` — `buildScene`: computes the content of the visible window
+- `src/render.ts` — `renderScene`: renders said content with a canvas renderer
 - `src/trigram.ts` — trigram model loader (reads `model.bin`)
-- `src/main.ts` — wires trigram model as `LanguageModel<number>`, mouse-driven animation loop
+- `src/main.ts` — wires things together, displays widget, mouse-driven animation loop

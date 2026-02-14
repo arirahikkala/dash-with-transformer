@@ -40,6 +40,13 @@ export interface SceneNode<T> {
   children: Promise<SceneNode<T>[]>;
 }
 
+/** Display helpers for rendering tokens of type T. */
+export interface TokenDisplay<T> {
+  label: (token: T) => string;
+  color: (token: T) => string;
+  prefixToString: (prefix: readonly T[]) => string;
+}
+
 /** Everything needed to render one frame of the widget. */
 export interface Scene<T> {
   /** Top-level prediction nodes. */
