@@ -34,9 +34,51 @@ interface AscendResult<T> {
 }
 
 /**
+ * Check whether the top-left and bottom-left corners of the window
+ * are inside children whose squares are wide enough to cover the
+ * window's full width.
+ *
+ * The window's left edge is at x = 1 − winHeight in the node's frame.
+ * A child with probability p has its square's left edge at x = 1 − p.
+ * For the corner to be inside the child's square: p ≥ winHeight.
+ */
+function leftCornersInsideChildren(
+  dist: readonly { probability: number }[],
+  winTop: number,
+  winBot: number,
+): boolean {
+  const winHeight = winBot - winTop;
+  let cum = 0;
+  let topOk = false;
+  let botOk = false;
+  for (const entry of dist) {
+    const p = entry.probability;
+    if (p <= 0) continue;
+    const nextCum = cum + p;
+    if (!topOk && winTop >= cum && winTop < nextCum) {
+      if (p < winHeight) return false;
+      topOk = true;
+    }
+    if (!botOk && winBot > cum && winBot <= nextCum) {
+      if (p < winHeight) return false;
+      botOk = true;
+    }
+    if (topOk && botOk) return true;
+    cum = nextCum;
+  }
+  return topOk && botOk;
+}
+
+/**
  * Walk up from the cursor prefix, transforming window bounds into each
- * parent's frame using exact rational arithmetic, until the window
- * [winTop, winBot] fits entirely within [0, 1] or we reach the root.
+ * parent's frame using exact rational arithmetic, until:
+ * (a) the window [winTop, winBot] fits within [0, 1], AND
+ * (b) the children at the window's top and bottom edges have probability
+ *     ≥ winHeight, ensuring their squares cover the window's left corners.
+ *
+ * Condition (b) prevents the scene root from being a visually significant
+ * node; it will only become the scene root once its children fill the
+ * visible area, eliminating left-side flicker during zoom transitions.
  */
 async function ascendToSceneRoot<T>(
   model: LanguageModel<T>,
@@ -49,11 +91,24 @@ async function ascendToSceneRoot<T>(
   let winTop: Rat = fromFloat(winTopFloat);
   let winBot: Rat = fromFloat(winBotFloat);
 
-  while (mutablePrefix.length > 0) {
-    // If window fits inside [0, 1], we're done.
-    // winTop >= 0 AND winBot <= 1  (i.e. 1 >= winBot)
-    if (gte(winTop, ZERO) && gte(ONE, winBot)) break;
+  // Check if the window already fits at the starting level with
+  // left corners covered by children.
+  if (
+    mutablePrefix.length > 0 &&
+    gte(winTop, ZERO) &&
+    gte(ONE, winBot)
+  ) {
+    const dist = await model(mutablePrefix);
+    if (leftCornersInsideChildren(dist, toFloat(winTop), toFloat(winBot))) {
+      return {
+        scenePrefix: mutablePrefix,
+        winTop: toFloat(winTop),
+        winBot: toFloat(winBot),
+      };
+    }
+  }
 
+  while (mutablePrefix.length > 0) {
     const lastToken = mutablePrefix.pop()!;
     const dist = await model(mutablePrefix);
 
@@ -72,6 +127,15 @@ async function ascendToSceneRoot<T>(
     //   parent_winBot = cumBefore + child_winBot * prob
     winTop = add(cumBefore, mul(winTop, prob));
     winBot = add(cumBefore, mul(winBot, prob));
+
+    // Stop if the window fits vertically AND the children at the
+    // window edges are wide enough to cover the left corners.
+    // We reuse dist (the parent's distribution) for the check.
+    if (gte(winTop, ZERO) && gte(ONE, winBot)) {
+      if (leftCornersInsideChildren(dist, toFloat(winTop), toFloat(winBot))) {
+        break;
+      }
+    }
   }
 
   return {

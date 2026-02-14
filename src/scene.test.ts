@@ -181,21 +181,28 @@ describe("buildScene", () => {
 
     it("zoomed in: cursor centered means crosshairs at 0.5", async () => {
       // With prefix=["A"], x=0.5, y=0.5 → halfHeight=0.5
-      // Window in A's frame: [0, 1] — exactly A's square
-      // A's children should fill the window
+      // Window in A's frame: [0, 1] — exactly A's square.
+      // Ascent goes one level up to root so that A is a rendered child
+      // (its left edge covers the window's left side).
+      // In root's frame, window is [0, 0.5]. Scale=2, offset=0.
+      // Root's children: A [0, 1] (B culled, off-screen).
+      // A's children fill A: AA [0, 0.5], AB [0.5, 1].
       const cursor: Cursor<string> = { prefix: ["A"], x: 0.5, y: 0.5 };
       const scene = await buildScene(binary, cursor, 0.001);
-      // The first-level children of the scene should be A and B
-      // (the children of the A square in the model)
       const nodes = scene.children;
-      expect(nodes.length).toBe(2);
+      expect(nodes.length).toBe(1);
       expect(nodes[0].token).toBe("A");
-      expect(nodes[1].token).toBe("B");
-      // They should span the whole window [0,1]
       expect(nodes[0].y0).toBeCloseTo(0);
-      expect(nodes[0].y1).toBeCloseTo(0.5);
-      expect(nodes[1].y0).toBeCloseTo(0.5);
-      expect(nodes[1].y1).toBeCloseTo(1);
+      expect(nodes[0].y1).toBeCloseTo(1);
+      // A's children should be A and B spanning the window
+      const inner = await nodes[0].children;
+      expect(inner.length).toBe(2);
+      expect(inner[0].token).toBe("A");
+      expect(inner[0].y0).toBeCloseTo(0);
+      expect(inner[0].y1).toBeCloseTo(0.5);
+      expect(inner[1].token).toBe("B");
+      expect(inner[1].y0).toBeCloseTo(0.5);
+      expect(inner[1].y1).toBeCloseTo(1);
     });
   });
 
