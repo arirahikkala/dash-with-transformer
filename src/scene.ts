@@ -38,13 +38,13 @@ interface AscendResult<T> {
  * parent's frame using exact rational arithmetic, until the window
  * [winTop, winBot] fits entirely within [0, 1] or we reach the root.
  */
-function ascendToSceneRoot<T>(
+async function ascendToSceneRoot<T>(
   model: LanguageModel<T>,
   prefix: readonly T[],
   winTopFloat: number,
   winBotFloat: number,
   tokEq: (a: T, b: T) => boolean,
-): AscendResult<T> {
+): Promise<AscendResult<T>> {
   const mutablePrefix = [...prefix];
   let winTop: Rat = fromFloat(winTopFloat);
   let winBot: Rat = fromFloat(winBotFloat);
@@ -55,7 +55,7 @@ function ascendToSceneRoot<T>(
     if (gte(winTop, ZERO) && gte(ONE, winBot)) break;
 
     const lastToken = mutablePrefix.pop()!;
-    const dist = model(mutablePrefix);
+    const dist = await model(mutablePrefix);
 
     let cumBefore: Rat = ZERO;
     let prob: Rat = ZERO;
@@ -92,7 +92,7 @@ function ascendToSceneRoot<T>(
  * @param offset  - y position of this node's top edge in window coords
  * @param absProb - absolute probability of this prefix (in scene root frame)
  */
-function buildChildren<T>(
+async function buildChildren<T>(
   model: LanguageModel<T>,
   prefix: readonly T[],
   scale: number,
@@ -101,10 +101,10 @@ function buildChildren<T>(
   minAbsProb: number,
   depth: number,
   maxDepth: number,
-): SceneNode<T>[] {
+): Promise<SceneNode<T>[]> {
   if (depth >= maxDepth) return [];
 
-  const dist = model(prefix);
+  const dist = await model(prefix);
   if (dist.length === 0) return [];
 
   const nodes: SceneNode<T>[] = [];
@@ -162,12 +162,12 @@ export interface BuildSceneOptions {
  * @param minHeight - Minimum displayable height in window coords (e.g. 0.005)
  * @param options   - Optional settings
  */
-export function buildScene<T>(
+export async function buildScene<T>(
   model: LanguageModel<T>,
   cursor: Cursor<T>,
   minHeight: number,
   options?: BuildSceneOptions,
-): Scene<T> {
+): Promise<Scene<T>> {
   const maxD = options?.maxDepth ?? 100;
   const tokEq = (options?.tokenEquals as (a: T, b: T) => boolean) ??
     ((a: T, b: T): boolean => a === b);
@@ -179,7 +179,7 @@ export function buildScene<T>(
   const localWinBot = cursor.y + halfHeight;
 
   // Phase 2: Ascend to scene root
-  const { scenePrefix, winTop, winBot } = ascendToSceneRoot(
+  const { scenePrefix, winTop, winBot } = await ascendToSceneRoot(
     model,
     cursor.prefix,
     localWinTop,
@@ -196,7 +196,7 @@ export function buildScene<T>(
   const offset = -winTop * scale;
   const minAbsProb = minHeight * winHeight;
 
-  const children = buildChildren(
+  const children = await buildChildren(
     model,
     scenePrefix,
     scale,

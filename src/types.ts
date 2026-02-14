@@ -17,7 +17,7 @@ export interface TokenProb<T> {
  */
 export type LanguageModel<T> = (
   prefix: readonly T[],
-) => readonly TokenProb<T>[];
+) => Promise<readonly TokenProb<T>[]>;
 
 /** Cursor: a discrete prefix plus a continuous adjustment. */
 export interface Cursor<T> {
@@ -37,7 +37,7 @@ export interface SceneNode<T> {
   /** Bottom edge in window-relative coordinates [0,1]. */
   y1: number;
   /** Recursively expanded children (next-token predictions). */
-  children: SceneNode<T>[];
+  children: Promise<SceneNode<T>[]>;
 }
 
 /** Everything needed to render one frame of the widget. */

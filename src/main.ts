@@ -15,7 +15,7 @@ function isPrintableOrNewline(code: number): boolean {
 
 /** Wrap a TrigramModel as a generic LanguageModel<number>. */
 function wrapTrigramModel(trigram: TrigramModel): LanguageModel<number> {
-  return (prefix: readonly number[]): readonly TokenProb<number>[] => {
+  return async (prefix: readonly number[]): Promise<readonly TokenProb<number>[]> => {
     let context: string;
     if (prefix.length === 0) {
       context = "  ";
@@ -131,11 +131,34 @@ async function main() {
     mouseDown = false;
   });
 
-  // --- Render ---
-  function render() {
-    const scene = buildScene(model, cursor, 0.005);
-    renderScene(ctx, scene, canvas.width, canvas.height, renderOpts);
+  // --- Async render with abort support ---
+  let renderController: AbortController | null = null;
+
+  async function render(signal: AbortSignal) {
+    const scene = await buildScene(model, cursor, 0.005);
+    if (signal.aborted) return;
+    await renderScene(ctx, scene, canvas.width, canvas.height, renderOpts, signal);
+  }
+
+  // --- Monotonic normalizeCursor ---
+  let normalizeVersion = 0;
+
+  async function updateAndRender(dx: number, dy: number) {
+    const version = ++normalizeVersion;
+
+    const newCursor = await normalizeCursor(model, {
+      prefix: cursor.prefix,
+      x: cursor.x + dx,
+      y: cursor.y + dy,
+    });
+
+    if (version !== normalizeVersion) return;
+    cursor = newCursor;
     prefixEl.textContent = prefixToDisplayString(cursor.prefix);
+
+    renderController?.abort();
+    renderController = new AbortController();
+    render(renderController.signal);
   }
 
   // --- Animation loop ---
@@ -160,20 +183,15 @@ async function main() {
       const dx = ndx * SPEED * halfHeight * dt;
       const dy = ndy * SPEED * halfHeight * dt;
 
-      cursor = normalizeCursor(model, {
-        prefix: cursor.prefix,
-        x: cursor.x + dx,
-        y: cursor.y + dy,
-      });
-
-      render();
+      updateAndRender(dx, dy);
     }
 
     requestAnimationFrame(frame);
   }
 
   // Initial render, then start loop
-  render();
+  renderController = new AbortController();
+  render(renderController.signal);
   requestAnimationFrame(frame);
 }
 

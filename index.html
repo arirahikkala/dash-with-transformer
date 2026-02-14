@@ -26,14 +26,50 @@
         min-width: 300px;
         text-align: center;
       }
+      #dasher-container {
+        position: relative;
+      }
       #dasher-canvas {
         border: 1px solid #0f3460;
+        display: block;
+      }
+      #crosshair {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+      }
+      .crosshair-v {
+        position: absolute;
+        left: 50%;
+        top: 0;
+        bottom: 0;
+        width: 1.5px;
+        background: rgba(255, 60, 60, 0.8);
+        transform: translateX(-50%);
+      }
+      .crosshair-h {
+        position: absolute;
+        top: 50%;
+        left: 0;
+        right: 0;
+        height: 1.5px;
+        background: rgba(255, 60, 60, 0.8);
+        transform: translateY(-50%);
       }
     </style>
   </head>
   <body>
     <div id="prefix-display"></div>
-    <canvas id="dasher-canvas" width="600" height="600"></canvas>
+    <div id="dasher-container">
+      <canvas id="dasher-canvas" width="600" height="600"></canvas>
+      <div id="crosshair">
+        <div class="crosshair-v"></div>
+        <div class="crosshair-h"></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

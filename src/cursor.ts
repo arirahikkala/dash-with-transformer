@@ -41,11 +41,11 @@ export interface NormalizeOptions<T> {
  * Special property: if the input adjustment is (0, 0), the prefix is never
  * changed (unless some token has probability exactly 1).
  */
-export function normalizeCursor<T>(
+export async function normalizeCursor<T>(
   model: LanguageModel<T>,
   state: Cursor<T>,
   options?: NormalizeOptions<T>,
-): Cursor<T> {
+): Promise<Cursor<T>> {
   const maxDepth = options?.maxDepth ?? 100;
   const tokEq = options?.tokenEquals ?? ((a: T, b: T): boolean => a === b);
 
@@ -63,7 +63,7 @@ export function normalizeCursor<T>(
     // --- Phase 1: ascend if out of the current square ---
     if (oob && prefix.length > 0) {
       const lastToken = prefix.pop()!;
-      const dist = model(prefix);
+      const dist = await model(prefix);
 
       let cumBefore: Rat = ZERO;
       let prob: Rat = ZERO;
@@ -94,7 +94,7 @@ export function normalizeCursor<T>(
     // --- Phase 2: try to descend into the smallest containing child ---
     if (prefix.length >= maxDepth) break;
 
-    const dist = model(prefix);
+    const dist = await model(prefix);
     if (dist.length === 0) break;
 
     let cumProb: Rat = ZERO;
@@ -133,11 +133,11 @@ export function normalizeCursor<T>(
  * Uses exact rational arithmetic internally, returns float64.
  * Useful for verifying that normalisation preserves position.
  */
-export function cursorToGlobal<T>(
+export async function cursorToGlobal<T>(
   model: LanguageModel<T>,
   state: Cursor<T>,
   tokenEquals?: (a: T, b: T) => boolean,
-): { x: number; y: number } {
+): Promise<{ x: number; y: number }> {
   const eq = tokenEquals ?? ((a: T, b: T): boolean => a === b);
 
   let size: Rat = ONE;
@@ -145,7 +145,7 @@ export function cursorToGlobal<T>(
 
   for (let i = 0; i < state.prefix.length; i++) {
     const parentPrefix = state.prefix.slice(0, i);
-    const dist = model(parentPrefix);
+    const dist = await model(parentPrefix);
     const token = state.prefix[i];
 
     let cumBefore: Rat = ZERO;

@@ -9,13 +9,14 @@ export interface RenderOptions<T> {
 }
 
 /** Render nodes as right-aligned squares, parent first then children on top. */
-function renderNodes<T>(
+async function renderNodes<T>(
   ctx: CanvasRenderingContext2D,
   nodes: SceneNode<T>[],
   width: number,
   height: number,
   opts: RenderOptions<T>,
-): void {
+  signal: AbortSignal,
+): Promise<void> {
   for (const node of nodes) {
     const py0 = node.y0 * height;
     const py1 = node.y1 * height;
@@ -45,38 +46,25 @@ function renderNodes<T>(
     }
 
     // Children paint on top (smaller squares nested inside)
-    renderNodes(ctx, node.children, width, height, opts);
+    const children = await node.children;
+    if (signal.aborted) return;
+    await renderNodes(ctx, children, width, height, opts, signal);
+    if (signal.aborted) return;
   }
 }
 
 /** Render a Scene onto a 2D canvas. */
-export function renderScene<T>(
+export async function renderScene<T>(
   ctx: CanvasRenderingContext2D,
   scene: Scene<T>,
   width: number,
   height: number,
   opts: RenderOptions<T>,
-): void {
+  signal: AbortSignal,
+): Promise<void> {
   // Dark background — gaps and out-of-bounds areas show through as dark space.
   ctx.fillStyle = "#1a1a2e";
   ctx.fillRect(0, 0, width, height);
 
-  renderNodes(ctx, scene.children, width, height, opts);
-
-  // -- Crosshairs (always at canvas center) --
-  const cx = width / 2;
-  const cy = height / 2;
-
-  ctx.strokeStyle = "rgba(255, 60, 60, 0.8)";
-  ctx.lineWidth = 1.5;
-
-  ctx.beginPath();
-  ctx.moveTo(cx, 0);
-  ctx.lineTo(cx, height);
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.moveTo(0, cy);
-  ctx.lineTo(width, cy);
-  ctx.stroke();
+  await renderNodes(ctx, scene.children, width, height, opts, signal);
 }
