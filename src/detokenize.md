@@ -52,7 +52,7 @@ P(char c | node) = mass(child_c) / mass(node)
 For example, if the LM says P("hel")=0.3, P("hello")=0.5, P("help")=0.2,
 then the node after `h→e→l` has mass 1.0, and P(next char = 'l') = 0.5,
 P(next char = 'p') = 0.2. The remaining 0.3 is the probability that the
-token *ends* here (it's "hel", not a longer token) — this is handled by
+token _ends_ here (it's "hel", not a longer token) — this is handled by
 extension (below).
 
 ## Beam candidates
@@ -60,11 +60,11 @@ extension (below).
 Each candidate represents one possible tokenization of the character prefix
 consumed so far. It carries:
 
-| Field         | Meaning                                              |
-|---------------|------------------------------------------------------|
-| `tokenPrefix` | Committed tokens so far (e.g. `["he"]`)              |
-| `node`        | Position in the vocab trie (partway through current token) |
-| `logWeight`   | log P(this tokenization)                             |
+| Field         | Meaning                                                                         |
+| ------------- | ------------------------------------------------------------------------------- |
+| `tokenPrefix` | Committed tokens so far (e.g. `["he"]`)                                         |
+| `node`        | Position in the vocab trie (partway through current token)                      |
+| `logWeight`   | log P(this tokenization)                                                        |
 | `snapshot`    | `LMSnapshot`: the token distribution + precomputed masses for this token prefix |
 
 Within a single token (no commitment), advancing by a character just walks
@@ -89,7 +89,7 @@ To advance the beam by character `c`:
 3. **Prune** (paper's `prune_top_K_buckets`): Keep only the top K
    candidates whose relative probability exceeds the threshold.
 
-Extended candidates are pruned *before* materialization to avoid unnecessary
+Extended candidates are pruned _before_ materialization to avoid unnecessary
 LM calls.
 
 ## Next-character probabilities (`nextCharProbs` — paper's `next_char_probability`)
@@ -97,6 +97,7 @@ LM calls.
 Marginalize over the beam to produce a character-level distribution:
 
 For each candidate and each character child `c` of its trie node:
+
 ```
 contribution(c) = exp(logWeight) × mass(child_c) / mass(node)
 ```
@@ -116,7 +117,7 @@ children leading to "them", "there", etc.:
   "there", ...) — probability that the actual token is longer.
 - **After extending**: commit "the", get a fresh LM distribution, and
   contribute from the root — probability that the token is exactly "the"
-  and the *next* token starts with various characters.
+  and the _next_ token starts with various characters.
 
 Both paths are needed for correct character probabilities.
 
@@ -134,13 +135,13 @@ The public `detokenize` function wraps everything with two caches:
 
 ## Paper correspondence
 
-| Paper algorithm           | Our code                                      |
-|---------------------------|-----------------------------------------------|
-| `enum_cover`              | `tryExtend` + materialization in `advanceBeam` |
-| `prune_top_K_buckets`     | `pruneBeam`                                   |
-| `next_char_probability`   | `nextCharProbs`                               |
-| Token trie                | `buildVocabTrie` + `VocabTrieNode`            |
-| Weight propagation        | `computeLogMasses` (DFS instead of sparse matrices) |
+| Paper algorithm         | Our code                                            |
+| ----------------------- | --------------------------------------------------- |
+| `enum_cover`            | `tryExtend` + materialization in `advanceBeam`      |
+| `prune_top_K_buckets`   | `pruneBeam`                                         |
+| `next_char_probability` | `nextCharProbs`                                     |
+| Token trie              | `buildVocabTrie` + `VocabTrieNode`                  |
+| Weight propagation      | `computeLogMasses` (DFS instead of sparse matrices) |
 
 ## Simplifications vs. the reference implementation ([genlm-bytes](https://github.com/genlm/genlm-bytes))
 
