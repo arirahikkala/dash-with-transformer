@@ -57,3 +57,4 @@ arbitrarily distantly related nodes might be visible within the window, it has t
 - `src/render.ts` — `renderScene`: renders said content with a canvas renderer
 - `src/trigram.ts` — trigram model loader (reads `model.bin`)
 - `src/main.ts` — wires things together, displays widget, mouse-driven animation loop
+- `src/models.ts` - general language model support
