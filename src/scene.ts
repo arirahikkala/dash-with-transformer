@@ -34,51 +34,42 @@ interface AscendResult<T> {
 }
 
 /**
- * Check whether the top-left and bottom-left corners of the window
- * are inside children whose squares are wide enough to cover the
- * window's full width.
+ * Check whether [winTop, winBot] fits inside a single child's range.
  *
- * The window's left edge is at x = 1 − winHeight in the node's frame.
- * A child with probability p has its square's left edge at x = 1 − p.
- * For the corner to be inside the child's square: p ≥ winHeight.
+ * If a child with probability p contains the full y-range, then
+ * p ≥ winBot − winTop = winHeight, so its square (left edge at
+ * x = 1 − p) also covers the window's left edge (at x = 1 − winHeight).
+ * This guarantees no gap on the left side for any y in the window.
  */
-function leftCornersInsideChildren(
+function windowInsideSingleChild(
   dist: readonly { probability: number }[],
   winTop: number,
   winBot: number,
 ): boolean {
-  const winHeight = winBot - winTop;
   let cum = 0;
-  let topOk = false;
-  let botOk = false;
   for (const entry of dist) {
     const p = entry.probability;
     if (p <= 0) continue;
     const nextCum = cum + p;
-    if (!topOk && winTop >= cum && winTop < nextCum) {
-      if (p < winHeight) return false;
-      topOk = true;
+    if (winTop >= cum && winTop < nextCum) {
+      // Found the child containing winTop; does it also contain winBot?
+      return winBot <= nextCum;
     }
-    if (!botOk && winBot > cum && winBot <= nextCum) {
-      if (p < winHeight) return false;
-      botOk = true;
-    }
-    if (topOk && botOk) return true;
     cum = nextCum;
   }
-  return topOk && botOk;
+  return false;
 }
 
 /**
  * Walk up from the cursor prefix, transforming window bounds into each
  * parent's frame using exact rational arithmetic, until:
  * (a) the window [winTop, winBot] fits within [0, 1], AND
- * (b) the children at the window's top and bottom edges have probability
- *     ≥ winHeight, ensuring their squares cover the window's left corners.
+ * (b) the entire window fits inside a single child of the current node.
  *
- * Condition (b) prevents the scene root from being a visually significant
- * node; it will only become the scene root once its children fill the
- * visible area, eliminating left-side flicker during zoom transitions.
+ * Condition (b) guarantees that one child's square covers the full
+ * window width — no gap can appear on the left side at any y position.
+ * The scene root only changes once the covering child is large enough
+ * to fill the visible area, eliminating left-side flicker during zoom.
  */
 async function ascendToSceneRoot<T>(
   model: LanguageModel<T>,
@@ -95,7 +86,7 @@ async function ascendToSceneRoot<T>(
   // left corners covered by children.
   if (mutablePrefix.length > 0 && gte(winTop, ZERO) && gte(ONE, winBot)) {
     const dist = await model(mutablePrefix);
-    if (leftCornersInsideChildren(dist, toFloat(winTop), toFloat(winBot))) {
+    if (windowInsideSingleChild(dist, toFloat(winTop), toFloat(winBot))) {
       return {
         scenePrefix: mutablePrefix,
         winTop: toFloat(winTop),
@@ -128,7 +119,7 @@ async function ascendToSceneRoot<T>(
     // window edges are wide enough to cover the left corners.
     // We reuse dist (the parent's distribution) for the check.
     if (gte(winTop, ZERO) && gte(ONE, winBot)) {
-      if (leftCornersInsideChildren(dist, toFloat(winTop), toFloat(winBot))) {
+      if (windowInsideSingleChild(dist, toFloat(winTop), toFloat(winBot))) {
         break;
       }
     }

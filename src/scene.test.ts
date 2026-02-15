@@ -372,16 +372,35 @@ describe("buildScene", () => {
       }
     });
 
-    it("zoomed in deep: window stays inside current square", async () => {
-      // prefix at depth 5, cursor.x near 1 → very zoomed in, small window
-      // Window should fit inside the square — no ascent needed
+    it("zoomed in deep: window inside single child needs no ascent", async () => {
+      // prefix at depth 5, cursor.x near 1, y centered inside child A
+      // Window [0.15, 0.35] fits inside A [0, 0.5] — no ascent needed.
+      // Only A is visible at the top level (B is off-screen).
+      const prefix = Array<string>(5).fill("A");
+      const cursor: Cursor<string> = { prefix, x: 0.9, y: 0.25 };
+      const scene = await buildScene(binary, cursor, 0.01);
+      expect(scene.children.length).toBe(1);
+      expect(scene.children[0].token).toBe("A");
+      // A's children (at prefix depth 6) are both visible
+      const inner = await scene.children[0].children;
+      expect(inner.length).toBe(2);
+      expect(inner[0].token).toBe("A");
+      expect(inner[1].token).toBe("B");
+    });
+
+    it("zoomed in deep: window straddling children ascends one level", async () => {
+      // prefix at depth 5, y=0.5 straddles the A/B boundary
+      // Window [0.4, 0.6] spans two children, so ascent goes one level up
       const prefix = Array<string>(5).fill("A");
       const cursor: Cursor<string> = { prefix, x: 0.9, y: 0.5 };
       const scene = await buildScene(binary, cursor, 0.01);
-      // Should show children of the AAAAA prefix
-      expect(scene.children.length).toBe(2);
+      // Scene root is now AAAA; its child A covers the full window
+      expect(scene.children.length).toBe(1);
       expect(scene.children[0].token).toBe("A");
-      expect(scene.children[1].token).toBe("B");
+      const inner = await scene.children[0].children;
+      expect(inner.length).toBe(2);
+      expect(inner[0].token).toBe("A");
+      expect(inner[1].token).toBe("B");
     });
   });
 });
