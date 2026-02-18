@@ -197,8 +197,8 @@ describe("range filtering", () => {
 
   it("excludes entries outside the range", async () => {
     const lm = fromByteLevelModel(makeMockModel(table));
-    // [0.5, 0.75) includes only è
-    const result = await lm([], 0.5, 0.75, 0);
+    // [0.51, 0.74] excludes a (ends at 0.5) and é (starts at 0.75)
+    const result = await lm([], 0.51, 0.74, 0);
 
     expect(result).toHaveLength(1);
     expect(result[0].token).toBe(0xe8); // è
@@ -210,6 +210,105 @@ describe("range filtering", () => {
     const result = await lm([], 0.4, 0.8, 0);
     const tokens = result.map((e) => e.token);
     expect(tokens).toEqual([97, 0xe8, 0xe9]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Closed-range semantics
+// ---------------------------------------------------------------------------
+
+describe("closed-range semantics", () => {
+  // a=[0, 0.5], è=[0.5, 0.75], é=[0.75, 1.0]
+  const table: Record<string, number[]> = {
+    "": makeDist({ 97: 0.5, 0xc3: 0.5 }),
+    c3: makeDist({ 0xa8: 0.5, 0xa9: 0.5 }),
+  };
+
+  it("point query returns the containing node", async () => {
+    const lm = fromByteLevelModel(makeMockModel(table));
+    // 0.6 is inside è=[0.5, 0.75]
+    const result = await lm([], 0.6, 0.6, 0);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].token).toBe(0xe8);
+  });
+
+  it("point query at a boundary returns both adjacent nodes", async () => {
+    const lm = fromByteLevelModel(makeMockModel(table));
+    // 0.5 is exactly at the boundary between a=[0, 0.5] and è=[0.5, 0.75]
+    const result = await lm([], 0.5, 0.5, 0);
+
+    expect(result).toHaveLength(2);
+    expect(result[0].token).toBe(97); // a (end touches)
+    expect(result[1].token).toBe(0xe8); // è (start touches)
+  });
+
+  it("point query at a multi-byte boundary returns both adjacent nodes", async () => {
+    const lm = fromByteLevelModel(makeMockModel(table));
+    // 0.75 is exactly at the boundary between è=[0.5, 0.75] and é=[0.75, 1.0]
+    const result = await lm([], 0.75, 0.75, 0);
+
+    expect(result).toHaveLength(2);
+    expect(result[0].token).toBe(0xe8); // è (end touches)
+    expect(result[1].token).toBe(0xe9); // é (start touches)
+  });
+
+  it("closed range includes nodes touching the boundary", async () => {
+    const lm = fromByteLevelModel(makeMockModel(table));
+    // [0.5, 0.75] touches a at its end AND é at its start
+    const result = await lm([], 0.5, 0.75, 0);
+
+    expect(result).toHaveLength(3);
+    expect(result.map((e) => e.token)).toEqual([97, 0xe8, 0xe9]);
+  });
+
+  it("point query at 0 returns the first node", async () => {
+    const lm = fromByteLevelModel(makeMockModel(table));
+    const result = await lm([], 0, 0, 0);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].token).toBe(97);
+  });
+
+  it("point query at 1 returns the last node", async () => {
+    const lm = fromByteLevelModel(makeMockModel(table));
+    const result = await lm([], 1, 1, 0);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].token).toBe(0xe9);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Closed-range semantics with multi-byte sub-groups
+// ---------------------------------------------------------------------------
+
+describe("closed-range with deep multi-byte", () => {
+  // 3-byte: E4 → two second bytes, each with one third byte
+  // 中 = E4 B8 AD at [0, 0.5],  乀 = E4 B9 80 at [0.5, 1.0]
+  const table: Record<string, number[]> = {
+    "": makeDist({ 0xe4: 1.0 }),
+    e4: makeDist({ 0xb8: 0.5, 0xb9: 0.5 }),
+    e4b8: makeDist({ 0xad: 1.0 }),
+    e4b9: makeDist({ 0x80: 1.0 }),
+  };
+
+  it("point query at sub-group boundary returns both codepoints", async () => {
+    const lm = fromByteLevelModel(makeMockModel(table));
+    // 0.5 is the boundary between 中=[0, 0.5] and 乀=[0.5, 1.0]
+    const result = await lm([], 0.5, 0.5, 0);
+
+    expect(result).toHaveLength(2);
+    expect(result[0].token).toBe(0x4e2d); // 中
+    expect(result[1].token).toBe(0x4e40); // 乀
+  });
+
+  it("point query inside a sub-group returns just that codepoint", async () => {
+    const lm = fromByteLevelModel(makeMockModel(table));
+    const result = await lm([], 0.25, 0.25, 0);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].token).toBe(0x4e2d);
   });
 });
 
@@ -290,8 +389,8 @@ describe("call minimisation", () => {
     const { model, calls } = makeTrackingModel(table);
     const lm = fromByteLevelModel(model);
 
-    // range [0, 0.5) covers only the ASCII group
-    await lm([], 0, 0.5, 0);
+    // range [0, 0.49] — multi-byte group starts at 0.5, excluded
+    await lm([], 0, 0.49, 0);
     expect(calls).toEqual([""]);
   });
 
@@ -322,8 +421,8 @@ describe("call minimisation", () => {
     const { model, calls } = makeTrackingModel(table);
     const lm = fromByteLevelModel(model);
 
-    // range [0.5, 0.75) — only 0xC3 group overlaps
-    await lm([], 0.5, 0.75, 0);
+    // range [0.51, 0.74] — only 0xC3 group overlaps
+    await lm([], 0.51, 0.74, 0);
 
     expect(calls).toContain(""); // first-byte
     expect(calls).toContain("c3"); // expanded
@@ -343,8 +442,8 @@ describe("call minimisation", () => {
     const { model, calls } = makeTrackingModel(table);
     const lm = fromByteLevelModel(model);
 
-    // range [0, 0.5) covers only the B8 sub-group
-    await lm([], 0, 0.5, 0);
+    // range [0, 0.49] covers only the B8 sub-group
+    await lm([], 0, 0.49, 0);
 
     expect(calls).toContain(""); // first-byte
     expect(calls).toContain("e4"); // second-byte dist
@@ -383,8 +482,8 @@ describe("call minimisation", () => {
     const { model, calls } = makeTrackingModel(table);
     const lm = fromByteLevelModel(model);
 
-    // range [0, 0.5) — only the 0x98 sub-group
-    await lm([], 0, 0.5, 0);
+    // range [0, 0.49] — only the 0x98 sub-group
+    await lm([], 0, 0.49, 0);
 
     expect(calls).toContain("f09f98");
     expect(calls).not.toContain("f09f99");

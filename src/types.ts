@@ -63,7 +63,7 @@ export function adaptModel<P, T>(
         }
         continue;
       }
-      if (end <= rangeStart || start >= rangeEnd) continue;
+      if (end < rangeStart || start > rangeEnd) continue;
       if (entry.probability < minSize) continue;
       result.push({ token: entry.token, start, end });
     }

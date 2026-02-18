@@ -77,7 +77,7 @@ async function expandMultiByte(
   if (partialBytes.length === totalBytes) {
     const start = toFloat(cumStart);
     const end = toFloat(add(cumStart, probSoFar));
-    if (end <= rangeStart || start >= rangeEnd) return [];
+    if (end < rangeStart || start > rangeEnd) return [];
     if (end - start < minSize) return [];
     return [{ token: decodeUtf8Bytes(partialBytes), start, end }];
   }
@@ -98,7 +98,7 @@ async function expandMultiByte(
 
     const subStart = toFloat(subCumStart);
     const subEnd = toFloat(cum);
-    if (subEnd <= rangeStart || subStart >= rangeEnd) continue;
+    if (subEnd < rangeStart || subStart > rangeEnd) continue;
     if (subEnd - subStart < minSize) continue;
 
     tasks.push(
@@ -225,7 +225,7 @@ export function fromByteLevelModel(
       if (firstByteDist[b] === 0) continue;
       const start = toFloat(firstByteCumStart[b]);
       const end = toFloat(add(firstByteCumStart[b], firstByteProbs[b]));
-      if (end <= rangeStart || start >= rangeEnd) continue;
+      if (end < rangeStart || start > rangeEnd) continue;
       if (end - start < minSize) continue;
       result.push({ token: b, start, end });
     }
@@ -248,7 +248,7 @@ export function fromByteLevelModel(
       const groupEndF = toFloat(add(firstByteCumStart[b], firstByteProbs[b]));
 
       // Skip groups entirely outside the visible range.
-      if (groupEndF <= rangeStart || groupStartF >= rangeEnd) continue;
+      if (groupEndF < rangeStart || groupStartF > rangeEnd) continue;
       // Skip groups where every codepoint is below minSize.
       if (firstByteDist[b] < minSize) continue;
 
