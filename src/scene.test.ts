@@ -182,32 +182,18 @@ describe("buildScene", () => {
 
     it("zoomed in: cursor centered means crosshairs at 0.5", async () => {
       // With prefix=["A"], x=0.5, y=0.5 → halfHeight=0.5
-      // Window in A's frame: [0, 1] — exactly A's square.
-      // Ascent goes one level up to root so that A is a rendered child
-      // (its left edge covers the window's left side).
-      // In root's frame, window is [0, 0.5]. Scale=2, offset=0.
-      // Root's children: A [0, 1], B [1, 2] (B touches closed range boundary).
-      // A's children fill A: AA [0, 0.5], AB [0.5, 1].
+      // Window in A's frame: [0, 1] — fits in [0,1], so scenePrefix=["A"].
+      // Scale=1, offset=0.  Children of ["A"]: A at [0, 0.5], B at [0.5, 1].
       const cursor: Cursor<string> = { prefix: ["A"], x: 0.5, y: 0.5 };
       const scene = await buildScene(binary, cursor, 0.001);
       const nodes = scene.children;
       expect(nodes.length).toBe(2);
       expect(nodes[0].token).toBe("A");
       expect(nodes[0].y0).toBeCloseTo(0);
-      expect(nodes[0].y1).toBeCloseTo(1);
-      // B touches the closed range boundary — included but off-screen
+      expect(nodes[0].y1).toBeCloseTo(0.5);
       expect(nodes[1].token).toBe("B");
-      expect(nodes[1].y0).toBeCloseTo(1);
-      expect(nodes[1].y1).toBeCloseTo(2);
-      // A's children should be A and B spanning the window
-      const inner = await nodes[0].children;
-      expect(inner.length).toBe(2);
-      expect(inner[0].token).toBe("A");
-      expect(inner[0].y0).toBeCloseTo(0);
-      expect(inner[0].y1).toBeCloseTo(0.5);
-      expect(inner[1].token).toBe("B");
-      expect(inner[1].y0).toBeCloseTo(0.5);
-      expect(inner[1].y1).toBeCloseTo(1);
+      expect(nodes[1].y0).toBeCloseTo(0.5);
+      expect(nodes[1].y1).toBeCloseTo(1);
     });
   });
 
@@ -393,19 +379,16 @@ describe("buildScene", () => {
       expect(inner[1].token).toBe("B");
     });
 
-    it("zoomed in deep: window straddling children ascends one level", async () => {
+    it("zoomed in deep: window straddling children stays at same level", async () => {
       // prefix at depth 5, y=0.5 straddles the A/B boundary
-      // Window [0.4, 0.6] spans two children, so ascent goes one level up
+      // Window [0.4, 0.6] fits in [0,1], so scenePrefix stays at depth 5.
+      // Both A and B are visible at the top level.
       const prefix = Array<string>(5).fill("A");
       const cursor: Cursor<string> = { prefix, x: 0.9, y: 0.5 };
       const scene = await buildScene(binary, cursor, 0.01);
-      // Scene root is now AAAA; its child A covers the full window
-      expect(scene.children.length).toBe(1);
+      expect(scene.children.length).toBe(2);
       expect(scene.children[0].token).toBe("A");
-      const inner = await scene.children[0].children;
-      expect(inner.length).toBe(2);
-      expect(inner[0].token).toBe("A");
-      expect(inner[1].token).toBe("B");
+      expect(scene.children[1].token).toBe("B");
     });
   });
 });

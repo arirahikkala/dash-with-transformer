@@ -48,6 +48,25 @@ The visible window is a square centered on the cursor with its right edge at x=1
 the displayed area). buildScene in scene.ts finds the tree of SceneNodeS within the window. Since technically
 arbitrarily distantly related nodes might be visible within the window, it has to do recursive ascent/descent as well.
 
+## LanguageModel
+
+`LanguageModel<P, T>` in `types.ts` is the central abstraction for querying next-token distributions. Its signature:
+
+    (prefix, rangeStart, rangeEnd, minSize, specificToken?) → Promise<TokenProb<T>[]>
+
+Each returned `TokenProb` has a `start` and `end` on the cumulative probability line [0, 1]. These extents depend only on the prefix — the query parameters just control which entries are returned:
+
+- **rangeStart / rangeEnd** — closed range `[rangeStart, rangeEnd]`. Only entries whose extent touches this range are returned. A point query (`start === end`) returns the 1–2 entries at that exact point.
+- **minSize** — only entries with probability ≥ minSize are returned.
+- **specificToken** — if set, return only that token's extent (ignoring range/size), doing minimal work. Used by the ascent paths in cursor.ts and scene.ts to look up a known token without materializing the full distribution.
+
+Two implementations exist:
+
+- `adaptModel` (types.ts) — wraps a simple `prefix → {token, probability}[]` function, computing cumulative extents and applying filters. Used by the trigram model.
+- `fromByteLevelModel` (models.ts) — adapts a byte-level UTF-8 model into a codepoint-level model, using exact rational arithmetic for cumulative positions and recursive expansion of multi-byte sequences. This is the main production implementation.
+
+**Performance note:** the type is generic, but the main use at this time is representing a Unicode codepoint model via `fromByteLevelModel`. A query with `minSize=0`, full range, and no `specificToken` materializes the entire distribution over all Unicode codepoints present in the model — expanding every multi-byte group one byte-level query at a time. Hence, *every LanguageModel call must have a nonzero minSize or specificToken* set.
+
 ## Architecture
 
 - `src/types.ts` - central types

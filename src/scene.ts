@@ -21,13 +21,7 @@ import {
   toFloat,
 } from "./rational";
 
-import type {
-  LanguageModel,
-  TokenProb,
-  Cursor,
-  SceneNode,
-  Scene,
-} from "./types";
+import type { LanguageModel, Cursor, SceneNode, Scene } from "./types";
 
 // ---------------------------------------------------------------------------
 // Phase 2: Ascend to scene root (Rat arithmetic)
@@ -40,38 +34,14 @@ interface AscendResult<T> {
 }
 
 /**
- * Check whether [winTop, winBot] fits inside a single child's range.
- *
- * If a child with probability p contains the full y-range, then
- * p ≥ winBot − winTop = winHeight, so its square (left edge at
- * x = 1 − p) also covers the window's left edge (at x = 1 − winHeight).
- * This guarantees no gap on the left side for any y in the window.
- */
-function windowInsideSingleChild<T>(
-  dist: readonly TokenProb<T>[],
-  winTop: number,
-  winBot: number,
-): boolean {
-  for (const entry of dist) {
-    if (entry.end <= entry.start) continue;
-    if (winTop >= entry.start && winTop < entry.end) {
-      // Found the child containing winTop; does it also contain winBot?
-      return winBot <= entry.end;
-    }
-  }
-  return false;
-}
-
-/**
  * Walk up from the cursor prefix, transforming window bounds into each
- * parent's frame using exact rational arithmetic, until:
- * (a) the window [winTop, winBot] fits within [0, 1], AND
- * (b) the entire window fits inside a single child of the current node.
+ * parent's frame using exact rational arithmetic, until the window
+ * [winTop, winBot] fits within [0, 1] (i.e. the scene root's square
+ * contains the entire view).
  *
- * Condition (b) guarantees that one child's square covers the full
- * window width — no gap can appear on the left side at any y position.
- * The scene root only changes once the covering child is large enough
- * to fill the visible area, eliminating left-side flicker during zoom.
+ * Each ascent step uses a specificToken lookup for the child we came
+ * from — since we ascend from a normalized cursor, the cursor is always
+ * inside that child, never in an ancestor's sibling.
  */
 async function ascendToSceneRoot<T>(
   model: LanguageModel<readonly T[], T>,
@@ -83,17 +53,13 @@ async function ascendToSceneRoot<T>(
   let winTop: Rat = fromFloat(winTopFloat);
   let winBot: Rat = fromFloat(winBotFloat);
 
-  // Check if the window already fits at the starting level with
-  // left corners covered by children.
+  // If the window already fits at the starting level, no ascent needed.
   if (mutablePrefix.length > 0 && gte(winTop, ZERO) && gte(ONE, winBot)) {
-    const dist = await model(mutablePrefix, 0, 1, 0);
-    if (windowInsideSingleChild(dist, toFloat(winTop), toFloat(winBot))) {
-      return {
-        scenePrefix: mutablePrefix,
-        winTop: toFloat(winTop),
-        winBot: toFloat(winBot),
-      };
-    }
+    return {
+      scenePrefix: mutablePrefix,
+      winTop: toFloat(winTop),
+      winBot: toFloat(winBot),
+    };
   }
 
   while (mutablePrefix.length > 0) {
@@ -113,13 +79,8 @@ async function ascendToSceneRoot<T>(
     winTop = add(cumBefore, mul(winTop, prob));
     winBot = add(cumBefore, mul(winBot, prob));
 
-    // Stop if the window fits vertically AND the children at the
-    // window edges are wide enough to cover the left corners.
     if (gte(winTop, ZERO) && gte(ONE, winBot)) {
-      const dist = await model(mutablePrefix, 0, 1, 0);
-      if (windowInsideSingleChild(dist, toFloat(winTop), toFloat(winBot))) {
-        break;
-      }
+      break;
     }
   }
 
