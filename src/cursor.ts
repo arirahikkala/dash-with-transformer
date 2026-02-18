@@ -88,7 +88,8 @@ export async function normalizeCursor<T>(
     // --- Phase 2: try to descend into the smallest containing child ---
     if (prefix.length >= maxDepth) break;
 
-    const dist = await model(prefix, 0, 1, 0);
+    const yf = toFloat(y);
+    const dist = await model(prefix, yf, yf, 0);
     if (dist.length === 0) break;
 
     let descended = false;
