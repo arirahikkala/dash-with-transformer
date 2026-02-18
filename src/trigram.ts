@@ -44,8 +44,10 @@ function isPrintableOrNewline(code: number): boolean {
   return code === 10 || (code >= 32 && code <= 126);
 }
 
-/** Wrap a TrigramModel as a generic LanguageModel<number>. */
-function wrapTrigramModel(trigram: TrigramModel): LanguageModel<number> {
+/** Wrap a TrigramModel as a generic LanguageModel<readonly number[], number>. */
+function wrapTrigramModel(
+  trigram: TrigramModel,
+): LanguageModel<readonly number[], number> {
   return async (
     prefix: readonly number[],
   ): Promise<readonly TokenProb<number>[]> => {
@@ -110,7 +112,8 @@ export async function loadTrigramModel() {
   const resp = await fetch("/model.bin");
   const buffer = await resp.arrayBuffer();
   const trigram = new TrigramModel(buffer);
-  const model: LanguageModel<number> = wrapTrigramModel(trigram);
+  const model: LanguageModel<readonly number[], number> =
+    wrapTrigramModel(trigram);
   const display: TokenDisplay<number> = {
     label: labelFor,
     color: colorFor,

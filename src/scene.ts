@@ -72,7 +72,7 @@ function windowInsideSingleChild(
  * to fill the visible area, eliminating left-side flicker during zoom.
  */
 async function ascendToSceneRoot<T>(
-  model: LanguageModel<T>,
+  model: LanguageModel<readonly T[], T>,
   prefix: readonly T[],
   winTopFloat: number,
   winBotFloat: number,
@@ -144,7 +144,7 @@ async function ascendToSceneRoot<T>(
  * @param absProb - absolute probability of this prefix (in scene root frame)
  */
 async function buildChildren<T>(
-  model: LanguageModel<T>,
+  model: LanguageModel<readonly T[], T>,
   prefix: readonly T[],
   scale: number,
   offset: number,
@@ -214,7 +214,7 @@ export interface BuildSceneOptions {
  * @param options   - Optional settings
  */
 export async function buildScene<T>(
-  model: LanguageModel<T>,
+  model: LanguageModel<readonly T[], T>,
   cursor: Cursor<T>,
   minHeight: number,
   options?: BuildSceneOptions,

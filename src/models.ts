@@ -54,7 +54,9 @@ function walk<T>(
 }
 
 /** Wrap a LanguageModel with a trie-based memoization layer. */
-export function memoize<T>(model: LanguageModel<T>): LanguageModel<T> {
+export function memoize<T>(
+  model: LanguageModel<readonly T[], T>,
+): LanguageModel<readonly T[], T> {
   const root: TrieNode<T> = makeNode<T>();
   const inflight = new Map<string, Promise<readonly TokenProb<T>[]>>();
 
@@ -173,7 +175,7 @@ interface LMSnapshot {
 }
 
 async function takeLMSnapshot(
-  model: LanguageModel<string>,
+  model: LanguageModel<readonly string[], string>,
   trieRoot: VocabTrieNode,
   tokenPrefix: readonly string[],
 ): Promise<LMSnapshot> {
@@ -383,8 +385,8 @@ async function nextCharProbs(
 // --- Public API -----------------------------------------------------------
 
 /**
- * Convert a token-level LanguageModel<string> into a character-level
- * LanguageModel<number> (where tokens are char codes).
+ * Convert a token-level LanguageModel into a character-level
+ * LanguageModel (where tokens are char codes).
  *
  * @param tokenModel  The underlying token-level model.
  * @param vocab       Complete token vocabulary (each entry is the string
@@ -394,11 +396,11 @@ async function nextCharProbs(
  *                        below this (0 = never prune by threshold).
  */
 export function detokenize(
-  tokenModel: LanguageModel<string>,
+  tokenModel: LanguageModel<readonly string[], string>,
   vocab: readonly string[],
   K: number,
   pruneThreshold = 0,
-): LanguageModel<number> {
+): LanguageModel<readonly number[], number> {
   const trie = buildVocabTrie(vocab);
   const logPruneThreshold =
     pruneThreshold > 0 ? Math.log(pruneThreshold) : -Infinity;

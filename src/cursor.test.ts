@@ -7,26 +7,26 @@ import { normalizeCursor, cursorToGlobal } from "./cursor";
 // ---------------------------------------------------------------------------
 
 /** Uniform binary: A and B each with probability 0.5. */
-const binary: LanguageModel<string> = async () => [
+const binary: LanguageModel<readonly string[], string> = async () => [
   { token: "A", probability: 0.5 },
   { token: "B", probability: 0.5 },
 ];
 
 /** Asymmetric binary: A = 0.8, B = 0.2. */
-const asym: LanguageModel<string> = async () => [
+const asym: LanguageModel<readonly string[], string> = async () => [
   { token: "A", probability: 0.8 },
   { token: "B", probability: 0.2 },
 ];
 
 /** Three tokens. */
-const ternary: LanguageModel<string> = async () => [
+const ternary: LanguageModel<readonly string[], string> = async () => [
   { token: "X", probability: 0.2 },
   { token: "Y", probability: 0.5 },
   { token: "Z", probability: 0.3 },
 ];
 
 /** Context-sensitive: distribution depends on the last token. */
-const contextual: LanguageModel<string> = async (prefix) => {
+const contextual: LanguageModel<readonly string[], string> = async (prefix) => {
   if (prefix.length === 0)
     return [
       { token: "A", probability: 0.6 },
@@ -44,12 +44,12 @@ const contextual: LanguageModel<string> = async (prefix) => {
 };
 
 /** Deterministic: single token with probability 1. */
-const deterministic: LanguageModel<string> = async () => [
+const deterministic: LanguageModel<readonly string[], string> = async () => [
   { token: "A", probability: 1.0 },
 ];
 
 /** Empty distribution — no continuations. */
-const empty: LanguageModel<string> = async () => [];
+const empty: LanguageModel<readonly string[], string> = async () => [];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -57,7 +57,7 @@ const empty: LanguageModel<string> = async () => [];
 
 /** Assert that two cursor states point at the same global location. */
 async function expectSameGlobal<T>(
-  model: LanguageModel<T>,
+  model: LanguageModel<readonly T[], T>,
   a: Cursor<T>,
   b: Cursor<T>,
   tokenEquals?: (x: T, y: T) => boolean,
@@ -269,7 +269,7 @@ describe("normalizeCursor", () => {
   describe("global position preservation", () => {
     const cases: Array<{
       name: string;
-      model: LanguageModel<string>;
+      model: LanguageModel<readonly string[], string>;
       state: Cursor<string>;
     }> = [
       {
@@ -370,7 +370,7 @@ describe("normalizeCursor", () => {
 
   describe("generic token types", () => {
     it("works with numeric tokens", async () => {
-      const numModel: LanguageModel<number> = async () => [
+      const numModel: LanguageModel<readonly number[], number> = async () => [
         { token: 1, probability: 0.4 },
         { token: 2, probability: 0.6 },
       ];
@@ -384,7 +384,7 @@ describe("normalizeCursor", () => {
 
     it("ascends correctly with object tokens and custom equality", async () => {
       type Tok = { id: number };
-      const objModel: LanguageModel<Tok> = async () => [
+      const objModel: LanguageModel<readonly Tok[], Tok> = async () => [
         { token: { id: 1 }, probability: 0.5 },
         { token: { id: 2 }, probability: 0.5 },
       ];
@@ -475,7 +475,7 @@ describe("normalizeCursor", () => {
         0.17, 0.13, 0.11, 0.09, 0.07, 0.06, 0.05, 0.03, 0.02, 0.27,
       ];
       const tokens = "abcdefghij".split("");
-      const manyModel: LanguageModel<string> = async () =>
+      const manyModel: LanguageModel<readonly string[], string> = async () =>
         tokens.map((token, i) => ({ token, probability: probs[i] }));
 
       // Nest 15 deep in "j" (prob 0.27), then nudge into "a".

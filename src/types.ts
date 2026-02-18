@@ -14,9 +14,12 @@ export interface TokenProb<T> {
 /**
  * A language model: given a prefix, return the next-token distribution.
  * Probabilities must be positive and sum to 1.
+ *
+ * @template P - The type of the prefix (e.g. `string`, `readonly number[]`).
+ * @template T - The type of each next-token.
  */
-export type LanguageModel<T> = (
-  prefix: readonly T[],
+export type LanguageModel<P, T> = (
+  prefix: P,
 ) => Promise<readonly TokenProb<T>[]>;
 
 /** Cursor: a discrete prefix plus a continuous adjustment. */

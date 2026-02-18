@@ -42,7 +42,7 @@ export interface NormalizeOptions<T> {
  * changed (unless some token has probability exactly 1).
  */
 export async function normalizeCursor<T>(
-  model: LanguageModel<T>,
+  model: LanguageModel<readonly T[], T>,
   state: Cursor<T>,
   options?: NormalizeOptions<T>,
 ): Promise<Cursor<T>> {
@@ -134,7 +134,7 @@ export async function normalizeCursor<T>(
  * Useful for verifying that normalisation preserves position.
  */
 export async function cursorToGlobal<T>(
-  model: LanguageModel<T>,
+  model: LanguageModel<readonly T[], T>,
   state: Cursor<T>,
   tokenEquals?: (a: T, b: T) => boolean,
 ): Promise<{ x: number; y: number }> {

@@ -7,31 +7,31 @@ import { buildScene } from "./scene";
 // ---------------------------------------------------------------------------
 
 /** Uniform binary: A and B each with probability 0.5. */
-const binary: LanguageModel<string> = async () => [
+const binary: LanguageModel<readonly string[], string> = async () => [
   { token: "A", probability: 0.5 },
   { token: "B", probability: 0.5 },
 ];
 
 /** Asymmetric binary: A = 0.8, B = 0.2. */
-const asym: LanguageModel<string> = async () => [
+const asym: LanguageModel<readonly string[], string> = async () => [
   { token: "A", probability: 0.8 },
   { token: "B", probability: 0.2 },
 ];
 
 /** Three tokens. */
-const ternary: LanguageModel<string> = async () => [
+const ternary: LanguageModel<readonly string[], string> = async () => [
   { token: "X", probability: 0.2 },
   { token: "Y", probability: 0.5 },
   { token: "Z", probability: 0.3 },
 ];
 
 /** Deterministic: single token with probability 1. */
-const deterministic: LanguageModel<string> = async () => [
+const deterministic: LanguageModel<readonly string[], string> = async () => [
   { token: "A", probability: 1.0 },
 ];
 
 /** Empty distribution — no continuations. */
-const empty: LanguageModel<string> = async () => [];
+const empty: LanguageModel<readonly string[], string> = async () => [];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -329,7 +329,7 @@ describe("buildScene", () => {
     });
 
     it("works with numeric token types", async () => {
-      const numModel: LanguageModel<number> = async () => [
+      const numModel: LanguageModel<readonly number[], number> = async () => [
         { token: 1, probability: 0.4 },
         { token: 2, probability: 0.6 },
       ];
