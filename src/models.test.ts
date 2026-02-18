@@ -330,6 +330,65 @@ describe("call minimisation", () => {
     expect(calls).not.toContain("c2"); // skipped
     expect(calls).not.toContain("e4"); // skipped
   });
+
+  it("skips deep continuation sub-groups outside the range", async () => {
+    // 3-byte: E4 → two second bytes, each with one third byte
+    // 中 = E4 B8 AD at [0, 0.5],  乀 = E4 B9 80 at [0.5, 1.0]
+    const table: Record<string, number[]> = {
+      "": makeDist({ 0xe4: 1.0 }),
+      e4: makeDist({ 0xb8: 0.5, 0xb9: 0.5 }),
+      e4b8: makeDist({ 0xad: 1.0 }),
+      e4b9: makeDist({ 0x80: 1.0 }),
+    };
+    const { model, calls } = makeTrackingModel(table);
+    const lm = fromByteLevelModel(model);
+
+    // range [0, 0.5) covers only the B8 sub-group
+    await lm([], 0, 0.5, 0);
+
+    expect(calls).toContain(""); // first-byte
+    expect(calls).toContain("e4"); // second-byte dist
+    expect(calls).toContain("e4b8"); // in range → expanded
+    expect(calls).not.toContain("e4b9"); // out of range → skipped
+  });
+
+  it("skips deep continuation sub-groups below minSize", async () => {
+    const table: Record<string, number[]> = {
+      "": makeDist({ 0xe4: 1.0 }),
+      e4: makeDist({ 0xb8: 0.75, 0xb9: 0.25 }),
+      e4b8: makeDist({ 0xad: 1.0 }),
+      e4b9: makeDist({ 0x80: 1.0 }),
+    };
+    const { model, calls } = makeTrackingModel(table);
+    const lm = fromByteLevelModel(model);
+
+    // minSize 0.3 — B9 sub-group (prob 0.25) is below threshold
+    await lm([], 0, 1, 0.3);
+
+    expect(calls).toContain("e4b8"); // 0.75 ≥ 0.3 → expanded
+    expect(calls).not.toContain("e4b9"); // 0.25 < 0.3 → skipped
+  });
+
+  it("skips 4-byte third-level continuations outside the range", async () => {
+    // 😀 = F0 9F 98 80,  😁 = F0 9F 98 81
+    // Both live inside F0 → 9F → 98, so they share three levels.
+    // Add a second sub-group under F0 9F (byte 99) to test pruning.
+    const table: Record<string, number[]> = {
+      "": makeDist({ 0xf0: 1.0 }),
+      f0: makeDist({ 0x9f: 1.0 }),
+      f09f: makeDist({ 0x98: 0.5, 0x99: 0.5 }),
+      f09f98: makeDist({ 0x80: 1.0 }), // 😀 at [0, 0.5]
+      f09f99: makeDist({ 0x80: 1.0 }), // 🦀 at [0.5, 1] (F0 9F 99 80 = U+1F640)
+    };
+    const { model, calls } = makeTrackingModel(table);
+    const lm = fromByteLevelModel(model);
+
+    // range [0, 0.5) — only the 0x98 sub-group
+    await lm([], 0, 0.5, 0);
+
+    expect(calls).toContain("f09f98");
+    expect(calls).not.toContain("f09f99");
+  });
 });
 
 // ---------------------------------------------------------------------------

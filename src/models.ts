@@ -31,9 +31,7 @@ function decodeUtf8Bytes(bytes: number[]): number {
       return ((bytes[0] & 0x1f) << 6) | (bytes[1] & 0x3f);
     case 3:
       return (
-        ((bytes[0] & 0x0f) << 12) |
-        ((bytes[1] & 0x3f) << 6) |
-        (bytes[2] & 0x3f)
+        ((bytes[0] & 0x0f) << 12) | ((bytes[1] & 0x3f) << 6) | (bytes[2] & 0x3f)
       );
     case 4:
       return (
@@ -54,8 +52,13 @@ function decodeUtf8Bytes(bytes: number[]): number {
 type ByteLevelModel = (bytePrefix: ArrayBuffer) => Promise<number[]>;
 
 /**
- * Recursively expand a partial UTF-8 sequence into (codepoint, probability)
- * pairs by querying the byte-level model for continuation bytes.
+ * Recursively expand a partial UTF-8 sequence into filtered TokenProb entries
+ * by querying the byte-level model for continuation bytes.
+ *
+ * At each level the cumulative positions of all sub-groups are computed
+ * (so that later sub-groups have correct absolute positions even when
+ * earlier ones are skipped), and only sub-groups that overlap the visible
+ * range and meet the minimum-size threshold are recursed into.
  *
  * Returns entries in byte order (= codepoint order within a fixed lead byte).
  * All continuation queries at the same depth run in parallel.
@@ -66,24 +69,49 @@ async function expandMultiByte(
   partialBytes: number[],
   totalBytes: number,
   probSoFar: Rat,
-): Promise<{ codepoint: number; prob: Rat }[]> {
+  cumStart: Rat,
+  rangeStart: number,
+  rangeEnd: number,
+  minSize: number,
+): Promise<TokenProb<number>[]> {
   if (partialBytes.length === totalBytes) {
-    return [{ codepoint: decodeUtf8Bytes(partialBytes), prob: probSoFar }];
+    const start = toFloat(cumStart);
+    const end = toFloat(add(cumStart, probSoFar));
+    if (end <= rangeStart || start >= rangeEnd) return [];
+    if (end - start < minSize) return [];
+    return [{ token: decodeUtf8Bytes(partialBytes), start, end }];
   }
 
   const queryPrefix = new Uint8Array([...bytePrefix, ...partialBytes]);
   const dist = await model(queryPrefix.buffer);
 
-  const tasks: Promise<{ codepoint: number; prob: Rat }[]>[] = [];
+  // Single pass: accumulate cumulative positions for ALL non-zero
+  // continuation bytes (so later sub-groups are positioned correctly),
+  // but only recurse into those that pass the range/size filters.
+  const tasks: Promise<TokenProb<number>[]>[] = [];
+  let cum = cumStart;
   for (let b = 0; b < 256; b++) {
     if (dist[b] === 0) continue;
+    const subProb = mul(probSoFar, fromFloat(dist[b]));
+    const subCumStart = cum;
+    cum = add(cum, subProb);
+
+    const subStart = toFloat(subCumStart);
+    const subEnd = toFloat(cum);
+    if (subEnd <= rangeStart || subStart >= rangeEnd) continue;
+    if (subEnd - subStart < minSize) continue;
+
     tasks.push(
       expandMultiByte(
         model,
         bytePrefix,
         [...partialBytes, b],
         totalBytes,
-        mul(probSoFar, fromFloat(dist[b])),
+        subProb,
+        subCumStart,
+        rangeStart,
+        rangeEnd,
+        minSize,
       ),
     );
   }
@@ -108,6 +136,9 @@ async function expandMultiByte(
  * - Multi-byte groups entirely outside [rangeStart, rangeEnd] are skipped.
  * - Multi-byte groups with total probability < minSize are skipped
  *   (every codepoint in the group must be ≤ the group total).
+ * - The same pruning is applied recursively at every continuation-byte
+ *   level, so e.g. a 3-byte group only queries the third byte for
+ *   second-byte sub-groups that overlap the range and meet minSize.
  *
  * Calls are maximally parallel: all continuation queries at the same
  * depth run concurrently via Promise.all.
@@ -187,7 +218,7 @@ export function fromByteLevelModel(
       });
     }
 
-    // 5. Expand all needed groups in parallel.
+    // 5. Expand all needed groups in parallel (filtering happens inside).
     const expansions = await Promise.all(
       groupsToExpand.map((g) =>
         expandMultiByte(
@@ -196,25 +227,17 @@ export function fromByteLevelModel(
           [g.firstByte],
           g.totalBytes,
           g.prob,
+          g.cumStart,
+          rangeStart,
+          rangeEnd,
+          minSize,
         ),
       ),
     );
 
-    // 6. Compute positions and filter.
-    for (let i = 0; i < groupsToExpand.length; i++) {
-      const entries = expansions[i];
-      let groupCum = groupsToExpand[i].cumStart;
-
-      for (const entry of entries) {
-        const start = toFloat(groupCum);
-        groupCum = add(groupCum, entry.prob);
-        const end = toFloat(groupCum);
-
-        if (end <= rangeStart || start >= rangeEnd) continue;
-        if (end - start < minSize) continue;
-
-        result.push({ token: entry.codepoint, start, end });
-      }
+    // 6. Append filtered results.
+    for (const entries of expansions) {
+      result.push(...entries);
     }
 
     return result;
