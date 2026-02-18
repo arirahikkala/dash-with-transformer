@@ -1,0 +1,482 @@
+import { describe, it, expect } from "vitest";
+import { fromByteLevelModel } from "./models";
+
+// ---------------------------------------------------------------------------
+// Test helpers
+// ---------------------------------------------------------------------------
+
+type ByteLevelModel = (bytePrefix: ArrayBuffer) => Promise<number[]>;
+
+/** Build a 256-element probability array with specific non-zero entries. */
+function makeDist(entries: Record<number, number>): number[] {
+  const dist = new Array(256).fill(0);
+  for (const [byte, prob] of Object.entries(entries)) {
+    dist[Number(byte)] = prob;
+  }
+  return dist;
+}
+
+/** Hex key for a byte prefix (empty prefix → ""). */
+function prefixKey(buf: ArrayBuffer): string {
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/** Create a mock byte-level model from a hex-key → dist table. */
+function makeMockModel(table: Record<string, number[]>): ByteLevelModel {
+  return async (prefix: ArrayBuffer) => {
+    const key = prefixKey(prefix);
+    const result = table[key];
+    if (!result) throw new Error(`Unexpected byte prefix: "${key}"`);
+    return result;
+  };
+}
+
+/** Like makeMockModel but also records the hex key of every call. */
+function makeTrackingModel(table: Record<string, number[]>): {
+  model: ByteLevelModel;
+  calls: string[];
+} {
+  const calls: string[] = [];
+  const model: ByteLevelModel = async (prefix: ArrayBuffer) => {
+    const key = prefixKey(prefix);
+    calls.push(key);
+    const result = table[key];
+    if (!result) throw new Error(`Unexpected byte prefix: "${key}"`);
+    return result;
+  };
+  return { model, calls };
+}
+
+// ---------------------------------------------------------------------------
+// Single-byte (ASCII) codepoints
+// ---------------------------------------------------------------------------
+
+describe("ASCII-only model", () => {
+  // Use power-of-2 probabilities for exact float comparisons.
+  const table: Record<string, number[]> = {
+    "": makeDist({ 97: 0.5, 98: 0.25, 99: 0.25 }), // a, b, c
+  };
+
+  it("returns correct tokens and extents", async () => {
+    const lm = fromByteLevelModel(makeMockModel(table));
+    const result = await lm([], 0, 1, 0);
+
+    expect(result).toHaveLength(3);
+    expect(result[0]).toEqual({ token: 97, start: 0, end: 0.5 });
+    expect(result[1]).toEqual({ token: 98, start: 0.5, end: 0.75 });
+    expect(result[2]).toEqual({ token: 99, start: 0.75, end: 1.0 });
+  });
+
+  it("returns tokens in ascending codepoint order", async () => {
+    // Deliberately list bytes out of natural order in the dist —
+    // the model still iterates 0..255 internally.
+    const lm = fromByteLevelModel(
+      makeMockModel({ "": makeDist({ 99: 0.25, 97: 0.5, 98: 0.25 }) }),
+    );
+    const tokens = (await lm([], 0, 1, 0)).map((e) => e.token);
+    expect(tokens).toEqual([97, 98, 99]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Two-byte codepoints
+// ---------------------------------------------------------------------------
+
+describe("two-byte codepoints", () => {
+  // 'è' = U+00E8 → C3 A8,  'é' = U+00E9 → C3 A9
+  const table: Record<string, number[]> = {
+    "": makeDist({ 97: 0.5, 0xc3: 0.5 }),
+    c3: makeDist({ 0xa8: 0.5, 0xa9: 0.5 }),
+  };
+
+  it("computes product probabilities correctly", async () => {
+    const lm = fromByteLevelModel(makeMockModel(table));
+    const result = await lm([], 0, 1, 0);
+
+    expect(result).toHaveLength(3);
+    expect(result[0]).toEqual({ token: 97, start: 0, end: 0.5 }); // a
+    expect(result[1]).toEqual({ token: 0xe8, start: 0.5, end: 0.75 }); // è
+    expect(result[2]).toEqual({ token: 0xe9, start: 0.75, end: 1.0 }); // é
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Three-byte codepoints
+// ---------------------------------------------------------------------------
+
+describe("three-byte codepoints", () => {
+  // '中' = U+4E2D → E4 B8 AD
+  const table: Record<string, number[]> = {
+    "": makeDist({ 0xe4: 1.0 }),
+    e4: makeDist({ 0xb8: 1.0 }),
+    e4b8: makeDist({ 0xad: 1.0 }),
+  };
+
+  it("resolves to the correct codepoint", async () => {
+    const lm = fromByteLevelModel(makeMockModel(table));
+    const result = await lm([], 0, 1, 0);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].token).toBe(0x4e2d);
+    expect(result[0].start).toBe(0);
+    expect(result[0].end).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Four-byte codepoints
+// ---------------------------------------------------------------------------
+
+describe("four-byte codepoints", () => {
+  // '😀' = U+1F600 → F0 9F 98 80
+  const table: Record<string, number[]> = {
+    "": makeDist({ 0xf0: 1.0 }),
+    f0: makeDist({ 0x9f: 1.0 }),
+    f09f: makeDist({ 0x98: 1.0 }),
+    f09f98: makeDist({ 0x80: 1.0 }),
+  };
+
+  it("resolves to the correct codepoint", async () => {
+    const lm = fromByteLevelModel(makeMockModel(table));
+    const result = await lm([], 0, 1, 0);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].token).toBe(0x1f600);
+    expect(result[0].start).toBe(0);
+    expect(result[0].end).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Mixed single + multi-byte
+// ---------------------------------------------------------------------------
+
+describe("mixed codepoints", () => {
+  // a (0.5) + é (0.25) + 中 (0.25)
+  const table: Record<string, number[]> = {
+    "": makeDist({ 97: 0.5, 0xc3: 0.25, 0xe4: 0.25 }),
+    c3: makeDist({ 0xa9: 1.0 }),
+    e4: makeDist({ 0xb8: 1.0 }),
+    e4b8: makeDist({ 0xad: 1.0 }),
+  };
+
+  it("orders and positions all codepoints correctly", async () => {
+    const lm = fromByteLevelModel(makeMockModel(table));
+    const result = await lm([], 0, 1, 0);
+
+    expect(result).toHaveLength(3);
+    expect(result[0]).toEqual({ token: 97, start: 0, end: 0.5 }); // a
+    expect(result[1]).toEqual({ token: 0xe9, start: 0.5, end: 0.75 }); // é
+    expect(result[2]).toEqual({ token: 0x4e2d, start: 0.75, end: 1.0 }); // 中
+  });
+
+  it("produces contiguous entries", async () => {
+    const lm = fromByteLevelModel(makeMockModel(table));
+    const result = await lm([], 0, 1, 0);
+
+    expect(result[0].start).toBe(0);
+    for (let i = 1; i < result.length; i++) {
+      expect(result[i].start).toBe(result[i - 1].end);
+    }
+    expect(result[result.length - 1].end).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Range filtering
+// ---------------------------------------------------------------------------
+
+describe("range filtering", () => {
+  // a=[0, 0.5], è=[0.5, 0.75], é=[0.75, 1.0]
+  const table: Record<string, number[]> = {
+    "": makeDist({ 97: 0.5, 0xc3: 0.5 }),
+    c3: makeDist({ 0xa8: 0.5, 0xa9: 0.5 }),
+  };
+
+  it("excludes entries outside the range", async () => {
+    const lm = fromByteLevelModel(makeMockModel(table));
+    // [0.5, 0.75) includes only è
+    const result = await lm([], 0.5, 0.75, 0);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].token).toBe(0xe8); // è
+  });
+
+  it("includes entries that partially overlap", async () => {
+    const lm = fromByteLevelModel(makeMockModel(table));
+    // [0.4, 0.8) overlaps a, è, é
+    const result = await lm([], 0.4, 0.8, 0);
+    const tokens = result.map((e) => e.token);
+    expect(tokens).toEqual([97, 0xe8, 0xe9]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// minSize filtering
+// ---------------------------------------------------------------------------
+
+describe("minSize filtering", () => {
+  const table: Record<string, number[]> = {
+    "": makeDist({ 97: 0.5, 0xc3: 0.5 }),
+    c3: makeDist({ 0xa8: 0.5, 0xa9: 0.5 }),
+  };
+
+  it("excludes entries below minSize", async () => {
+    const lm = fromByteLevelModel(makeMockModel(table));
+    // a=0.5, è=0.25, é=0.25  —  minSize 0.3 keeps only a
+    const result = await lm([], 0, 1, 0.3);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].token).toBe(97);
+  });
+
+  it("keeps entries at exactly minSize", async () => {
+    const lm = fromByteLevelModel(makeMockModel(table));
+    const result = await lm([], 0, 1, 0.25);
+    expect(result).toHaveLength(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Extent determinism — same (start, end) regardless of query parameters
+// ---------------------------------------------------------------------------
+
+describe("extent determinism", () => {
+  const table: Record<string, number[]> = {
+    "": makeDist({ 97: 0.5, 0xc3: 0.5 }),
+    c3: makeDist({ 0xa8: 0.5, 0xa9: 0.5 }),
+  };
+
+  it("produces identical extents for different range queries", async () => {
+    const lm = fromByteLevelModel(makeMockModel(table));
+
+    const full = await lm([], 0, 1, 0);
+    const narrow = await lm([], 0.6, 0.9, 0);
+
+    // Both queries should include è — verify same extent.
+    const eFull = full.find((e) => e.token === 0xe8)!;
+    const eNarrow = narrow.find((e) => e.token === 0xe8)!;
+
+    expect(eNarrow.start).toBe(eFull.start);
+    expect(eNarrow.end).toBe(eFull.end);
+  });
+
+  it("produces identical extents for different minSize queries", async () => {
+    const lm = fromByteLevelModel(makeMockModel(table));
+
+    const all = await lm([], 0, 1, 0);
+    const filtered = await lm([], 0, 1, 0.2);
+
+    const aAll = all.find((e) => e.token === 97)!;
+    const aFiltered = filtered.find((e) => e.token === 97)!;
+
+    expect(aFiltered.start).toBe(aAll.start);
+    expect(aFiltered.end).toBe(aAll.end);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Call minimisation
+// ---------------------------------------------------------------------------
+
+describe("call minimisation", () => {
+  it("makes only 1 call when multi-byte groups are out of range", async () => {
+    const table: Record<string, number[]> = {
+      "": makeDist({ 97: 0.5, 0xc3: 0.5 }),
+      c3: makeDist({ 0xa9: 1.0 }),
+    };
+    const { model, calls } = makeTrackingModel(table);
+    const lm = fromByteLevelModel(model);
+
+    // range [0, 0.5) covers only the ASCII group
+    await lm([], 0, 0.5, 0);
+    expect(calls).toEqual([""]);
+  });
+
+  it("skips groups below minSize", async () => {
+    const table: Record<string, number[]> = {
+      "": makeDist({ 97: 0.5, 0xc3: 0.25, 0xe4: 0.25 }),
+      c3: makeDist({ 0xa9: 1.0 }),
+      e4: makeDist({ 0xb8: 1.0 }),
+      e4b8: makeDist({ 0xad: 1.0 }),
+    };
+    const { model, calls } = makeTrackingModel(table);
+    const lm = fromByteLevelModel(model);
+
+    // minSize 0.3 means both multi-byte groups (0.25 each) are skipped
+    await lm([], 0, 1, 0.3);
+    expect(calls).toEqual([""]);
+  });
+
+  it("expands only the groups that overlap the range", async () => {
+    const table: Record<string, number[]> = {
+      "": makeDist({ 97: 0.25, 0xc2: 0.25, 0xc3: 0.25, 0xe4: 0.25 }),
+      c2: makeDist({ 0x80: 1.0 }),
+      c3: makeDist({ 0xa9: 1.0 }),
+      e4: makeDist({ 0xb8: 1.0 }),
+      e4b8: makeDist({ 0xad: 1.0 }),
+    };
+    // a=[0,.25], U+80=[.25,.5], é=[.5,.75], 中=[.75,1]
+    const { model, calls } = makeTrackingModel(table);
+    const lm = fromByteLevelModel(model);
+
+    // range [0.5, 0.75) — only 0xC3 group overlaps
+    await lm([], 0.5, 0.75, 0);
+
+    expect(calls).toContain(""); // first-byte
+    expect(calls).toContain("c3"); // expanded
+    expect(calls).not.toContain("c2"); // skipped
+    expect(calls).not.toContain("e4"); // skipped
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Parallelism
+// ---------------------------------------------------------------------------
+
+describe("parallelism", () => {
+  it("queries continuation bytes for different lead bytes concurrently", async () => {
+    let activeCalls = 0;
+    let maxConcurrency = 0;
+
+    const table: Record<string, number[]> = {
+      "": makeDist({ 0xc2: 0.5, 0xc3: 0.5 }),
+      c2: makeDist({ 0x80: 1.0 }),
+      c3: makeDist({ 0x80: 1.0 }),
+    };
+
+    const model: ByteLevelModel = async (prefix: ArrayBuffer) => {
+      const key = prefixKey(prefix);
+      activeCalls++;
+      maxConcurrency = Math.max(maxConcurrency, activeCalls);
+      // Yield so concurrent calls can register.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      activeCalls--;
+      return table[key]!;
+    };
+
+    const lm = fromByteLevelModel(model);
+    await lm([], 0, 1, 0);
+
+    // The two continuation calls (c2, c3) should overlap.
+    expect(maxConcurrency).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Codepoint prefix encoding
+// ---------------------------------------------------------------------------
+
+describe("codepoint prefix encoding", () => {
+  it("encodes an ASCII prefix", async () => {
+    const { model, calls } = makeTrackingModel({
+      "61": makeDist({ 98: 1.0 }), // after 'a', predict 'b'
+    });
+    const lm = fromByteLevelModel(model);
+
+    const result = await lm([0x61], 0, 1, 0);
+    expect(calls).toEqual(["61"]);
+    expect(result[0].token).toBe(98);
+  });
+
+  it("encodes a multi-byte codepoint prefix", async () => {
+    // 'é' = U+00E9 → UTF-8 C3 A9
+    const { model, calls } = makeTrackingModel({
+      c3a9: makeDist({ 97: 1.0 }),
+    });
+    const lm = fromByteLevelModel(model);
+
+    const result = await lm([0xe9], 0, 1, 0);
+    expect(calls).toEqual(["c3a9"]);
+    expect(result[0].token).toBe(97);
+  });
+
+  it("encodes a mixed single/multi-byte prefix", async () => {
+    // 'aé' → UTF-8 61 C3 A9
+    const { model, calls } = makeTrackingModel({
+      "61c3a9": makeDist({ 98: 1.0 }),
+    });
+    const lm = fromByteLevelModel(model);
+
+    const result = await lm([97, 0xe9], 0, 1, 0);
+    expect(calls).toEqual(["61c3a9"]);
+    expect(result[0].token).toBe(98);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Edge cases
+// ---------------------------------------------------------------------------
+
+describe("edge cases", () => {
+  it("returns empty for an all-zero distribution", async () => {
+    const lm = fromByteLevelModel(
+      makeMockModel({ "": new Array(256).fill(0) }),
+    );
+    const result = await lm([], 0, 1, 0);
+    expect(result).toHaveLength(0);
+  });
+
+  it("handles a single ASCII token", async () => {
+    const lm = fromByteLevelModel(makeMockModel({ "": makeDist({ 65: 1 }) }));
+    const result = await lm([], 0, 1, 0);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({ token: 65, start: 0, end: 1 });
+  });
+
+  it("handles multiple lead bytes for different sequence lengths", async () => {
+    // Mix of 2-byte, 3-byte, 4-byte in one distribution
+    const table: Record<string, number[]> = {
+      "": makeDist({ 0xc3: 0.25, 0xe4: 0.5, 0xf0: 0.25 }),
+      c3: makeDist({ 0xa9: 1.0 }),
+      e4: makeDist({ 0xb8: 1.0 }),
+      e4b8: makeDist({ 0xad: 1.0 }),
+      f0: makeDist({ 0x9f: 1.0 }),
+      f09f: makeDist({ 0x98: 1.0 }),
+      f09f98: makeDist({ 0x80: 1.0 }),
+    };
+    const lm = fromByteLevelModel(makeMockModel(table));
+    const result = await lm([], 0, 1, 0);
+
+    expect(result.map((e) => e.token)).toEqual([0xe9, 0x4e2d, 0x1f600]);
+    expect(result[0].start).toBe(0);
+    expect(result[0].end).toBe(0.25);
+    expect(result[1].start).toBe(0.25);
+    expect(result[1].end).toBe(0.75);
+    expect(result[2].start).toBe(0.75);
+    expect(result[2].end).toBe(1.0);
+  });
+
+  it("handles multiple continuation options in a 3-byte sequence", async () => {
+    // E4 → two second bytes, each with one third byte
+    const table: Record<string, number[]> = {
+      "": makeDist({ 0xe4: 1.0 }),
+      e4: makeDist({ 0xb8: 0.5, 0xb9: 0.5 }),
+      e4b8: makeDist({ 0xad: 1.0 }),
+      e4b9: makeDist({ 0x80: 1.0 }),
+    };
+    const lm = fromByteLevelModel(makeMockModel(table));
+    const result = await lm([], 0, 1, 0);
+
+    // E4 B8 AD = U+4E2D ('中'), E4 B9 80 = U+4E40 ('乀')
+    expect(result).toHaveLength(2);
+    expect(result[0].token).toBe(0x4e2d);
+    expect(result[0].end).toBe(0.5);
+    expect(result[1].token).toBe(0x4e40);
+    expect(result[1].start).toBe(0.5);
+    expect(result[1].end).toBe(1.0);
+  });
+
+  it("handles empty codepoint prefix", async () => {
+    const { model, calls } = makeTrackingModel({
+      "": makeDist({ 97: 1.0 }),
+    });
+    const lm = fromByteLevelModel(model);
+
+    await lm([], 0, 1, 0);
+    expect(calls).toEqual([""]);
+  });
+});
