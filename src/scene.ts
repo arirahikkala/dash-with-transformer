@@ -168,11 +168,8 @@ async function buildChildren<T>(
   const minSize = minAbsProb / absProb;
 
   const dist = await model(prefix, rangeStart, rangeEnd, minSize);
-  if (dist.length === 0) return [];
 
-  const nodes: SceneNode<T>[] = [];
-
-  for (const entry of dist) {
+  return dist.map((entry) => {
     const p = entry.end - entry.start;
     const y0 = offset + entry.start * scale;
     const y1 = offset + entry.end * scale;
@@ -190,10 +187,8 @@ async function buildChildren<T>(
       maxDepth,
     );
 
-    nodes.push({ token: entry.token, y0, y1, children });
-  }
-
-  return nodes;
+    return { token: entry.token, y0, y1, children };
+  });
 }
 
 // ---------------------------------------------------------------------------
