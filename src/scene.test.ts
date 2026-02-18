@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { LanguageModel, Cursor, SceneNode, Scene } from "./types";
+import { adaptModel } from "./types";
 import { buildScene } from "./scene";
 
 // ---------------------------------------------------------------------------
@@ -7,31 +8,31 @@ import { buildScene } from "./scene";
 // ---------------------------------------------------------------------------
 
 /** Uniform binary: A and B each with probability 0.5. */
-const binary: LanguageModel<readonly string[], string> = async () => [
+const binary = adaptModel<readonly string[], string>(async () => [
   { token: "A", probability: 0.5 },
   { token: "B", probability: 0.5 },
-];
+]);
 
 /** Asymmetric binary: A = 0.8, B = 0.2. */
-const asym: LanguageModel<readonly string[], string> = async () => [
+const asym = adaptModel<readonly string[], string>(async () => [
   { token: "A", probability: 0.8 },
   { token: "B", probability: 0.2 },
-];
+]);
 
 /** Three tokens. */
-const ternary: LanguageModel<readonly string[], string> = async () => [
+const ternary = adaptModel<readonly string[], string>(async () => [
   { token: "X", probability: 0.2 },
   { token: "Y", probability: 0.5 },
   { token: "Z", probability: 0.3 },
-];
+]);
 
 /** Deterministic: single token with probability 1. */
-const deterministic: LanguageModel<readonly string[], string> = async () => [
+const deterministic = adaptModel<readonly string[], string>(async () => [
   { token: "A", probability: 1.0 },
-];
+]);
 
 /** Empty distribution — no continuations. */
-const empty: LanguageModel<readonly string[], string> = async () => [];
+const empty = adaptModel<readonly string[], string>(async () => []);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -329,10 +330,10 @@ describe("buildScene", () => {
     });
 
     it("works with numeric token types", async () => {
-      const numModel: LanguageModel<readonly number[], number> = async () => [
+      const numModel = adaptModel<readonly number[], number>(async () => [
         { token: 1, probability: 0.4 },
         { token: 2, probability: 0.6 },
-      ];
+      ]);
       const cursor: Cursor<number> = { prefix: [], x: 0, y: 0.5 };
       const scene = await buildScene(numModel, cursor, 0.01);
       expect(scene.children.length).toBe(2);

@@ -63,16 +63,16 @@ export async function normalizeCursor<T>(
     // --- Phase 1: ascend if out of the current square ---
     if (oob && prefix.length > 0) {
       const lastToken = prefix.pop()!;
-      const dist = await model(prefix);
+      const dist = await model(prefix, 0, 1, 0);
 
       let cumBefore: Rat = ZERO;
       let prob: Rat = ZERO;
       for (const entry of dist) {
         if (tokEq(entry.token, lastToken)) {
-          prob = fromFloat(entry.probability);
+          cumBefore = fromFloat(entry.start);
+          prob = fromFloat(entry.end - entry.start);
           break;
         }
-        cumBefore = add(cumBefore, fromFloat(entry.probability));
       }
 
       // Map back to parent's coordinate frame.
@@ -94,27 +94,30 @@ export async function normalizeCursor<T>(
     // --- Phase 2: try to descend into the smallest containing child ---
     if (prefix.length >= maxDepth) break;
 
-    const dist = await model(prefix);
+    const dist = await model(prefix, 0, 1, 0);
     if (dist.length === 0) break;
 
-    let cumProb: Rat = ZERO;
     let descended = false;
 
     for (const entry of dist) {
-      if (entry.probability <= 0) continue;
-      const p = fromFloat(entry.probability);
+      const p = fromFloat(entry.end - entry.start);
+      if (toFloat(p) <= 0) continue;
 
-      //  Child occupies x ∈ [1−p, 1],  y ∈ [cumProb, cumProb+p]
+      //  Child occupies x ∈ [1−p, 1],  y ∈ [start, end]
       //  in the parent's normalised frame.
       const childXLeft = sub(ONE, p);
-      if (gte(x, childXLeft) && gte(y, cumProb) && lt(y, add(cumProb, p))) {
+      const cumProb = fromFloat(entry.start);
+      if (
+        gte(x, childXLeft) &&
+        gte(y, cumProb) &&
+        lt(y, fromFloat(entry.end))
+      ) {
         prefix.push(entry.token);
         x = div(sub(x, childXLeft), p);
         y = div(sub(y, cumProb), p);
         descended = true;
         break;
       }
-      cumProb = add(cumProb, p);
     }
 
     if (!descended) break;
@@ -145,17 +148,17 @@ export async function cursorToGlobal<T>(
 
   for (let i = 0; i < state.prefix.length; i++) {
     const parentPrefix = state.prefix.slice(0, i);
-    const dist = await model(parentPrefix);
+    const dist = await model(parentPrefix, 0, 1, 0);
     const token = state.prefix[i];
 
     let cumBefore: Rat = ZERO;
     let prob: Rat = ZERO;
     for (const entry of dist) {
       if (eq(entry.token, token)) {
-        prob = fromFloat(entry.probability);
+        cumBefore = fromFloat(entry.start);
+        prob = fromFloat(entry.end - entry.start);
         break;
       }
-      cumBefore = add(cumBefore, fromFloat(entry.probability));
     }
 
     top = add(top, mul(cumBefore, size));

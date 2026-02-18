@@ -3,24 +3,64 @@
  */
 
 /**
- * One entry in a next-token probability distribution.
- * The order of entries determines the top-to-bottom layout.
+ * One entry in a next-token probability distribution, placed on the
+ * cumulative-probability line.  `start` and `end` are the entry's
+ * extent on [0, 1]; the token's probability is `end − start`.
+ *
+ * A node's extents depend only on the prefix — the query parameters
+ * (rangeStart, rangeEnd, minSize) only govern whether it is listed.
  */
 export interface TokenProb<T> {
   readonly token: T;
-  readonly probability: number;
+  readonly start: number;
+  readonly end: number;
 }
 
 /**
- * A language model: given a prefix, return the next-token distribution.
- * Probabilities must be positive and sum to 1.
+ * A language model: given a prefix and visibility constraints, return
+ * the matching entries from the next-token distribution.
+ *
+ * Returned entries must not overlap, must have no holes between
+ * successive entries in the full distribution, and their extents must depend
+ * only on the prefix.
+ *
+ * @param prefix     - The token prefix.
+ * @param rangeStart - Only return entries overlapping [rangeStart, rangeEnd].
+ * @param rangeEnd   - Upper bound of the visible range.
+ * @param minSize    - Only return entries with (end − start) ≥ minSize.
  *
  * @template P - The type of the prefix (e.g. `string`, `readonly number[]`).
  * @template T - The type of each next-token.
  */
 export type LanguageModel<P, T> = (
   prefix: P,
+  rangeStart: number,
+  rangeEnd: number,
+  minSize: number,
 ) => Promise<readonly TokenProb<T>[]>;
+
+/**
+ * Adapt a simple probability-list model into a full LanguageModel
+ * that computes cumulative extents and handles range/size filtering.
+ */
+export function adaptModel<P, T>(
+  inner: (prefix: P) => Promise<readonly { token: T; probability: number }[]>,
+): LanguageModel<P, T> {
+  return async (prefix, rangeStart, rangeEnd, minSize) => {
+    const dist = await inner(prefix);
+    const result: TokenProb<T>[] = [];
+    let cum = 0;
+    for (const entry of dist) {
+      const start = cum;
+      const end = cum + entry.probability;
+      cum = end;
+      if (end <= rangeStart || start >= rangeEnd) continue;
+      if (entry.probability < minSize) continue;
+      result.push({ token: entry.token, start, end });
+    }
+    return result;
+  };
+}
 
 /** Cursor: a discrete prefix plus a continuous adjustment. */
 export interface Cursor<T> {

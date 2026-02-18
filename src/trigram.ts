@@ -1,4 +1,5 @@
-import type { LanguageModel, TokenDisplay, TokenProb } from "./types";
+import type { LanguageModel, TokenDisplay } from "./types";
+import { adaptModel } from "./types";
 
 const N = 128;
 
@@ -44,13 +45,9 @@ function isPrintableOrNewline(code: number): boolean {
   return code === 10 || (code >= 32 && code <= 126);
 }
 
-/** Wrap a TrigramModel as a generic LanguageModel<readonly number[], number>. */
-function wrapTrigramModel(
-  trigram: TrigramModel,
-): LanguageModel<readonly number[], number> {
-  return async (
-    prefix: readonly number[],
-  ): Promise<readonly TokenProb<number>[]> => {
+/** Wrap a TrigramModel as a simple probability-list model. */
+function wrapTrigramModel(trigram: TrigramModel) {
+  return async (prefix: readonly number[]) => {
     let context: string;
     if (prefix.length === 0) {
       context = "  ";
@@ -112,8 +109,9 @@ export async function loadTrigramModel() {
   const resp = await fetch("/model.bin");
   const buffer = await resp.arrayBuffer();
   const trigram = new TrigramModel(buffer);
-  const model: LanguageModel<readonly number[], number> =
-    wrapTrigramModel(trigram);
+  const model: LanguageModel<readonly number[], number> = adaptModel(
+    wrapTrigramModel(trigram),
+  );
   const display: TokenDisplay<number> = {
     label: labelFor,
     color: colorFor,

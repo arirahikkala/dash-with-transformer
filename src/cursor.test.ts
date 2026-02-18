@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { LanguageModel, Cursor } from "./types";
+import { adaptModel } from "./types";
 import { normalizeCursor, cursorToGlobal } from "./cursor";
 
 // ---------------------------------------------------------------------------
@@ -7,26 +8,26 @@ import { normalizeCursor, cursorToGlobal } from "./cursor";
 // ---------------------------------------------------------------------------
 
 /** Uniform binary: A and B each with probability 0.5. */
-const binary: LanguageModel<readonly string[], string> = async () => [
+const binary = adaptModel<readonly string[], string>(async () => [
   { token: "A", probability: 0.5 },
   { token: "B", probability: 0.5 },
-];
+]);
 
 /** Asymmetric binary: A = 0.8, B = 0.2. */
-const asym: LanguageModel<readonly string[], string> = async () => [
+const asym = adaptModel<readonly string[], string>(async () => [
   { token: "A", probability: 0.8 },
   { token: "B", probability: 0.2 },
-];
+]);
 
 /** Three tokens. */
-const ternary: LanguageModel<readonly string[], string> = async () => [
+const ternary = adaptModel<readonly string[], string>(async () => [
   { token: "X", probability: 0.2 },
   { token: "Y", probability: 0.5 },
   { token: "Z", probability: 0.3 },
-];
+]);
 
 /** Context-sensitive: distribution depends on the last token. */
-const contextual: LanguageModel<readonly string[], string> = async (prefix) => {
+const contextual = adaptModel<readonly string[], string>(async (prefix) => {
   if (prefix.length === 0)
     return [
       { token: "A", probability: 0.6 },
@@ -41,15 +42,15 @@ const contextual: LanguageModel<readonly string[], string> = async (prefix) => {
     { token: "A", probability: 0.5 },
     { token: "B", probability: 0.5 },
   ];
-};
+});
 
 /** Deterministic: single token with probability 1. */
-const deterministic: LanguageModel<readonly string[], string> = async () => [
+const deterministic = adaptModel<readonly string[], string>(async () => [
   { token: "A", probability: 1.0 },
-];
+]);
 
 /** Empty distribution — no continuations. */
-const empty: LanguageModel<readonly string[], string> = async () => [];
+const empty = adaptModel<readonly string[], string>(async () => []);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -370,10 +371,10 @@ describe("normalizeCursor", () => {
 
   describe("generic token types", () => {
     it("works with numeric tokens", async () => {
-      const numModel: LanguageModel<readonly number[], number> = async () => [
+      const numModel = adaptModel<readonly number[], number>(async () => [
         { token: 1, probability: 0.4 },
         { token: 2, probability: 0.6 },
-      ];
+      ]);
       // Token 1: x∈[0.6,1] y∈[0,0.4).  Token 2: x∈[0.4,1] y∈[0.4,1).
       // (0.5, 0.5): token 1 x≥0.6? no.  token 2 x≥0.4 and y∈[0.4,1)? yes.
       const r = await normalizeCursor(numModel, { prefix: [], x: 0.5, y: 0.5 });
@@ -384,10 +385,10 @@ describe("normalizeCursor", () => {
 
     it("ascends correctly with object tokens and custom equality", async () => {
       type Tok = { id: number };
-      const objModel: LanguageModel<readonly Tok[], Tok> = async () => [
+      const objModel = adaptModel<readonly Tok[], Tok>(async () => [
         { token: { id: 1 }, probability: 0.5 },
         { token: { id: 2 }, probability: 0.5 },
-      ];
+      ]);
       const eq = (a: Tok, b: Tok) => a.id === b.id;
 
       // prefix=[{id:1}], y=1.1 → ascend, enter {id:2}.
@@ -475,8 +476,9 @@ describe("normalizeCursor", () => {
         0.17, 0.13, 0.11, 0.09, 0.07, 0.06, 0.05, 0.03, 0.02, 0.27,
       ];
       const tokens = "abcdefghij".split("");
-      const manyModel: LanguageModel<readonly string[], string> = async () =>
-        tokens.map((token, i) => ({ token, probability: probs[i] }));
+      const manyModel = adaptModel<readonly string[], string>(async () =>
+        tokens.map((token, i) => ({ token, probability: probs[i] })),
+      );
 
       // Nest 15 deep in "j" (prob 0.27), then nudge into "a".
       const prefix = Array<string>(15).fill("j");

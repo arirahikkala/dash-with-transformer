@@ -21,7 +21,13 @@ import {
   toFloat,
 } from "./rational";
 
-import type { LanguageModel, Cursor, SceneNode, Scene } from "./types";
+import type {
+  LanguageModel,
+  TokenProb,
+  Cursor,
+  SceneNode,
+  Scene,
+} from "./types";
 
 // ---------------------------------------------------------------------------
 // Phase 2: Ascend to scene root (Rat arithmetic)
@@ -41,21 +47,17 @@ interface AscendResult<T> {
  * x = 1 − p) also covers the window's left edge (at x = 1 − winHeight).
  * This guarantees no gap on the left side for any y in the window.
  */
-function windowInsideSingleChild(
-  dist: readonly { probability: number }[],
+function windowInsideSingleChild<T>(
+  dist: readonly TokenProb<T>[],
   winTop: number,
   winBot: number,
 ): boolean {
-  let cum = 0;
   for (const entry of dist) {
-    const p = entry.probability;
-    if (p <= 0) continue;
-    const nextCum = cum + p;
-    if (winTop >= cum && winTop < nextCum) {
+    if (entry.end <= entry.start) continue;
+    if (winTop >= entry.start && winTop < entry.end) {
       // Found the child containing winTop; does it also contain winBot?
-      return winBot <= nextCum;
+      return winBot <= entry.end;
     }
-    cum = nextCum;
   }
   return false;
 }
@@ -85,7 +87,7 @@ async function ascendToSceneRoot<T>(
   // Check if the window already fits at the starting level with
   // left corners covered by children.
   if (mutablePrefix.length > 0 && gte(winTop, ZERO) && gte(ONE, winBot)) {
-    const dist = await model(mutablePrefix);
+    const dist = await model(mutablePrefix, 0, 1, 0);
     if (windowInsideSingleChild(dist, toFloat(winTop), toFloat(winBot))) {
       return {
         scenePrefix: mutablePrefix,
@@ -97,16 +99,16 @@ async function ascendToSceneRoot<T>(
 
   while (mutablePrefix.length > 0) {
     const lastToken = mutablePrefix.pop()!;
-    const dist = await model(mutablePrefix);
+    const dist = await model(mutablePrefix, 0, 1, 0);
 
     let cumBefore: Rat = ZERO;
     let prob: Rat = ZERO;
     for (const entry of dist) {
       if (tokEq(entry.token, lastToken)) {
-        prob = fromFloat(entry.probability);
+        cumBefore = fromFloat(entry.start);
+        prob = fromFloat(entry.end - entry.start);
         break;
       }
-      cumBefore = add(cumBefore, fromFloat(entry.probability));
     }
 
     // Transform to parent's frame:
@@ -139,6 +141,10 @@ async function ascendToSceneRoot<T>(
 /**
  * Recursively build visible children for a given prefix.
  *
+ * The model handles filtering: we map the visible window back to
+ * probability space and pass rangeStart/rangeEnd/minSize so the model
+ * only returns entries that are visible and large enough.
+ *
  * @param scale   - height of this node in window-relative units
  * @param offset  - y position of this node's top edge in window coords
  * @param absProb - absolute probability of this prefix (in scene root frame)
@@ -155,26 +161,22 @@ async function buildChildren<T>(
 ): Promise<SceneNode<T>[]> {
   if (depth >= maxDepth) return [];
 
-  const dist = await model(prefix);
+  // Map window [0,1] back to probability space for filtering.
+  // y = offset + cumProb * scale  →  cumProb = (y − offset) / scale
+  const rangeStart = -offset / scale;
+  const rangeEnd = (1 - offset) / scale;
+  const minSize = minAbsProb / absProb;
+
+  const dist = await model(prefix, rangeStart, rangeEnd, minSize);
   if (dist.length === 0) return [];
 
   const nodes: SceneNode<T>[] = [];
-  let cumProb = 0;
 
   for (const entry of dist) {
-    const p = entry.probability;
-    if (p <= 0) continue;
-
-    const y0 = offset + cumProb * scale;
-    const y1 = offset + (cumProb + p) * scale;
-    cumProb += p;
-
-    // Cull if entirely off-screen
-    if (y1 <= 0 || y0 >= 1) continue;
-
-    // Cull if too small
+    const p = entry.end - entry.start;
+    const y0 = offset + entry.start * scale;
+    const y1 = offset + entry.end * scale;
     const childAbsProb = absProb * p;
-    if (childAbsProb < minAbsProb) continue;
 
     const childPrefix = [...prefix, entry.token];
     const children = buildChildren(
