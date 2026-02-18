@@ -49,7 +49,7 @@ function decodeUtf8Bytes(bytes: number[]): number {
 // Multi-byte expansion
 // ---------------------------------------------------------------------------
 
-type ByteLevelModel = (bytePrefix: ArrayBuffer) => Promise<number[]>;
+type ByteLevelModel = (bytePrefix: Uint8Array) => Promise<number[]>;
 
 /**
  * Recursively expand a partial UTF-8 sequence into filtered TokenProb entries
@@ -83,7 +83,7 @@ async function expandMultiByte(
   }
 
   const queryPrefix = new Uint8Array([...bytePrefix, ...partialBytes]);
-  const dist = await model(queryPrefix.buffer);
+  const dist = await model(queryPrefix);
 
   // Single pass: accumulate cumulative positions for ALL non-zero
   // continuation bytes (so later sub-groups are positioned correctly),
@@ -158,7 +158,7 @@ export function fromByteLevelModel(
     const bytePrefix = codepointsToUtf8(prefix);
 
     // 1. First-byte distribution (1 model call).
-    const firstByteDist = await byteLevelModel(bytePrefix.buffer);
+    const firstByteDist = await byteLevelModel(bytePrefix);
 
     // 2. Exact cumulative start position for every first-byte group.
     //    P(all codepoints starting with byte b) = P(b), so the

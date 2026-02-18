@@ -5,7 +5,7 @@ import { fromByteLevelModel } from "./models";
 // Test helpers
 // ---------------------------------------------------------------------------
 
-type ByteLevelModel = (bytePrefix: ArrayBuffer) => Promise<number[]>;
+type ByteLevelModel = (bytePrefix: Uint8Array) => Promise<number[]>;
 
 /** Build a 256-element probability array with specific non-zero entries. */
 function makeDist(entries: Record<number, number>): number[] {
@@ -17,15 +17,15 @@ function makeDist(entries: Record<number, number>): number[] {
 }
 
 /** Hex key for a byte prefix (empty prefix → ""). */
-function prefixKey(buf: ArrayBuffer): string {
-  return Array.from(new Uint8Array(buf))
+function prefixKey(buf: Uint8Array): string {
+  return Array.from(buf)
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 }
 
 /** Create a mock byte-level model from a hex-key → dist table. */
 function makeMockModel(table: Record<string, number[]>): ByteLevelModel {
-  return async (prefix: ArrayBuffer) => {
+  return async (prefix: Uint8Array) => {
     const key = prefixKey(prefix);
     const result = table[key];
     if (!result) throw new Error(`Unexpected byte prefix: "${key}"`);
@@ -39,7 +39,7 @@ function makeTrackingModel(table: Record<string, number[]>): {
   calls: string[];
 } {
   const calls: string[] = [];
-  const model: ByteLevelModel = async (prefix: ArrayBuffer) => {
+  const model: ByteLevelModel = async (prefix: Uint8Array) => {
     const key = prefixKey(prefix);
     calls.push(key);
     const result = table[key];
@@ -406,7 +406,7 @@ describe("parallelism", () => {
       c3: makeDist({ 0x80: 1.0 }),
     };
 
-    const model: ByteLevelModel = async (prefix: ArrayBuffer) => {
+    const model: ByteLevelModel = async (prefix: Uint8Array) => {
       const key = prefixKey(prefix);
       activeCalls++;
       maxConcurrency = Math.max(maxConcurrency, activeCalls);
