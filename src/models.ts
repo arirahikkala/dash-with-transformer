@@ -154,8 +154,50 @@ export function fromByteLevelModel(
     rangeStart: number,
     rangeEnd: number,
     minSize: number,
+    specificToken?: number,
   ): Promise<readonly TokenProb<number>[]> => {
     const bytePrefix = codepointsToUtf8(prefix);
+
+    // Fast path: look up a single codepoint's extent.
+    if (specificToken !== undefined) {
+      const targetBytes = [...codepointsToUtf8([specificToken])];
+      const leadByte = targetBytes[0];
+
+      const firstByteDist = await byteLevelModel(bytePrefix);
+      if (firstByteDist[leadByte] === 0) return [];
+
+      // Cumulative start for the lead byte.
+      let cumStart: Rat = ZERO;
+      for (let b = 0; b < leadByte; b++) {
+        if (firstByteDist[b] > 0) {
+          cumStart = add(cumStart, fromFloat(firstByteDist[b]));
+        }
+      }
+      let probSoFar: Rat = fromFloat(firstByteDist[leadByte]);
+
+      // For multi-byte sequences, descend through continuation bytes.
+      for (let i = 1; i < targetBytes.length; i++) {
+        const queryPrefix = new Uint8Array([
+          ...bytePrefix,
+          ...targetBytes.slice(0, i),
+        ]);
+        const dist = await byteLevelModel(queryPrefix);
+        const targetByte = targetBytes[i];
+
+        if (dist[targetByte] === 0) return [];
+
+        for (let b = 0; b < targetByte; b++) {
+          if (dist[b] > 0) {
+            cumStart = add(cumStart, mul(probSoFar, fromFloat(dist[b])));
+          }
+        }
+        probSoFar = mul(probSoFar, fromFloat(dist[targetByte]));
+      }
+
+      const start = toFloat(cumStart);
+      const end = toFloat(add(cumStart, probSoFar));
+      return [{ token: specificToken, start, end }];
+    }
 
     // 1. First-byte distribution (1 model call).
     const firstByteDist = await byteLevelModel(bytePrefix);

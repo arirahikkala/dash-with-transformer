@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { LanguageModel, Cursor, SceneNode, Scene } from "./types";
+import type { Cursor, SceneNode, Scene } from "./types";
 import { adaptModel } from "./types";
 import { buildScene } from "./scene";
 

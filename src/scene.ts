@@ -78,7 +78,6 @@ async function ascendToSceneRoot<T>(
   prefix: readonly T[],
   winTopFloat: number,
   winBotFloat: number,
-  tokEq: (a: T, b: T) => boolean,
 ): Promise<AscendResult<T>> {
   const mutablePrefix = [...prefix];
   let winTop: Rat = fromFloat(winTopFloat);
@@ -99,16 +98,13 @@ async function ascendToSceneRoot<T>(
 
   while (mutablePrefix.length > 0) {
     const lastToken = mutablePrefix.pop()!;
-    const dist = await model(mutablePrefix, 0, 1, 0);
+    const tokenDist = await model(mutablePrefix, 0, 1, 0, lastToken);
 
     let cumBefore: Rat = ZERO;
     let prob: Rat = ZERO;
-    for (const entry of dist) {
-      if (tokEq(entry.token, lastToken)) {
-        cumBefore = fromFloat(entry.start);
-        prob = fromFloat(entry.end - entry.start);
-        break;
-      }
+    if (tokenDist.length > 0) {
+      cumBefore = fromFloat(tokenDist[0].start);
+      prob = fromFloat(tokenDist[0].end - tokenDist[0].start);
     }
 
     // Transform to parent's frame:
@@ -119,8 +115,8 @@ async function ascendToSceneRoot<T>(
 
     // Stop if the window fits vertically AND the children at the
     // window edges are wide enough to cover the left corners.
-    // We reuse dist (the parent's distribution) for the check.
     if (gte(winTop, ZERO) && gte(ONE, winBot)) {
+      const dist = await model(mutablePrefix, 0, 1, 0);
       if (windowInsideSingleChild(dist, toFloat(winTop), toFloat(winBot))) {
         break;
       }
@@ -198,8 +194,6 @@ async function buildChildren<T>(
 export interface BuildSceneOptions {
   /** Maximum recursion depth. Default 100. */
   maxDepth?: number;
-  /** Token equality (default: ===). Needed when tokens are objects. */
-  tokenEquals?: (a: unknown, b: unknown) => boolean;
 }
 
 /**
@@ -217,9 +211,6 @@ export async function buildScene<T>(
   options?: BuildSceneOptions,
 ): Promise<Scene<T>> {
   const maxD = options?.maxDepth ?? 100;
-  const tokEq =
-    (options?.tokenEquals as (a: T, b: T) => boolean) ??
-    ((a: T, b: T): boolean => a === b);
 
   // Phase 1: Window bounds in cursor-local frame
   // Window is a square centered on cursor, right edge at x=1
@@ -233,7 +224,6 @@ export async function buildScene<T>(
     cursor.prefix,
     localWinTop,
     localWinBot,
-    tokEq,
   );
 
   // Phase 3: Recursive descent from scene root

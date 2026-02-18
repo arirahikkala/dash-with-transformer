@@ -61,10 +61,9 @@ async function expectSameGlobal<T>(
   model: LanguageModel<readonly T[], T>,
   a: Cursor<T>,
   b: Cursor<T>,
-  tokenEquals?: (x: T, y: T) => boolean,
 ) {
-  const ga = await cursorToGlobal(model, a, tokenEquals);
-  const gb = await cursorToGlobal(model, b, tokenEquals);
+  const ga = await cursorToGlobal(model, a);
+  const gb = await cursorToGlobal(model, b);
   expect(gb.x).toBeCloseTo(ga.x, 10);
   expect(gb.y).toBeCloseTo(ga.y, 10);
 }
@@ -383,22 +382,23 @@ describe("normalizeCursor", () => {
       expect(r.y).toBeCloseTo(1 / 6);
     });
 
-    it("ascends correctly with object tokens and custom equality", async () => {
+    it("ascends correctly with object tokens (reference-equal)", async () => {
       type Tok = { id: number };
+      const tok1: Tok = { id: 1 };
+      const tok2: Tok = { id: 2 };
       const objModel = adaptModel<readonly Tok[], Tok>(async () => [
-        { token: { id: 1 }, probability: 0.5 },
-        { token: { id: 2 }, probability: 0.5 },
+        { token: tok1, probability: 0.5 },
+        { token: tok2, probability: 0.5 },
       ]);
-      const eq = (a: Tok, b: Tok) => a.id === b.id;
 
-      // prefix=[{id:1}], y=1.1 → ascend, enter {id:2}.
-      const r = await normalizeCursor(
-        objModel,
-        { prefix: [{ id: 1 }], x: 0.3, y: 1.1 },
-        { tokenEquals: eq },
-      );
+      // prefix=[tok1], y=1.1 → ascend, enter tok2.
+      const r = await normalizeCursor(objModel, {
+        prefix: [tok1],
+        x: 0.3,
+        y: 1.1,
+      });
       expect(r.prefix).toHaveLength(1);
-      expect(r.prefix[0]).toEqual({ id: 2 });
+      expect(r.prefix[0]).toBe(tok2);
       expect(r.x).toBeCloseTo(0.3);
       expect(r.y).toBeCloseTo(0.1);
     });

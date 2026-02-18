@@ -24,10 +24,12 @@ export interface TokenProb<T> {
  * successive entries in the full distribution, and their extents must depend
  * only on the prefix.
  *
- * @param prefix     - The token prefix.
- * @param rangeStart - Only return entries overlapping [rangeStart, rangeEnd].
- * @param rangeEnd   - Upper bound of the visible range.
- * @param minSize    - Only return entries with (end − start) ≥ minSize.
+ * @param prefix        - The token prefix.
+ * @param rangeStart    - Only return entries overlapping [rangeStart, rangeEnd].
+ * @param rangeEnd      - Upper bound of the visible range.
+ * @param minSize       - Only return entries with (end − start) ≥ minSize.
+ * @param specificToken - If set, return only this token's extent (ignoring
+ *                        range/size filters) with minimal computation.
  *
  * @template P - The type of the prefix (e.g. `string`, `readonly number[]`).
  * @template T - The type of each next-token.
@@ -37,6 +39,7 @@ export type LanguageModel<P, T> = (
   rangeStart: number,
   rangeEnd: number,
   minSize: number,
+  specificToken?: T,
 ) => Promise<readonly TokenProb<T>[]>;
 
 /**
@@ -46,7 +49,7 @@ export type LanguageModel<P, T> = (
 export function adaptModel<P, T>(
   inner: (prefix: P) => Promise<readonly { token: T; probability: number }[]>,
 ): LanguageModel<P, T> {
-  return async (prefix, rangeStart, rangeEnd, minSize) => {
+  return async (prefix, rangeStart, rangeEnd, minSize, specificToken) => {
     const dist = await inner(prefix);
     const result: TokenProb<T>[] = [];
     let cum = 0;
@@ -54,6 +57,12 @@ export function adaptModel<P, T>(
       const start = cum;
       const end = cum + entry.probability;
       cum = end;
+      if (specificToken !== undefined) {
+        if (entry.token === specificToken) {
+          return [{ token: entry.token, start, end }];
+        }
+        continue;
+      }
       if (end <= rangeStart || start >= rangeEnd) continue;
       if (entry.probability < minSize) continue;
       result.push({ token: entry.token, start, end });

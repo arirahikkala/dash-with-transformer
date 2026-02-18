@@ -19,11 +19,9 @@ import {
 
 import type { LanguageModel, Cursor } from "./types";
 
-export interface NormalizeOptions<T> {
+export interface NormalizeOptions {
   /** Stop descending when prefix reaches this length.  Default 100. */
   maxDepth?: number;
-  /** Token equality (default: ===). Needed when tokens are objects. */
-  tokenEquals?: (a: T, b: T) => boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -44,10 +42,9 @@ export interface NormalizeOptions<T> {
 export async function normalizeCursor<T>(
   model: LanguageModel<readonly T[], T>,
   state: Cursor<T>,
-  options?: NormalizeOptions<T>,
+  options?: NormalizeOptions,
 ): Promise<Cursor<T>> {
   const maxDepth = options?.maxDepth ?? 100;
-  const tokEq = options?.tokenEquals ?? ((a: T, b: T): boolean => a === b);
 
   const prefix: T[] = [...state.prefix];
   let x: Rat = fromFloat(state.x);
@@ -63,16 +60,13 @@ export async function normalizeCursor<T>(
     // --- Phase 1: ascend if out of the current square ---
     if (oob && prefix.length > 0) {
       const lastToken = prefix.pop()!;
-      const dist = await model(prefix, 0, 1, 0);
+      const dist = await model(prefix, 0, 1, 0, lastToken);
 
       let cumBefore: Rat = ZERO;
       let prob: Rat = ZERO;
-      for (const entry of dist) {
-        if (tokEq(entry.token, lastToken)) {
-          cumBefore = fromFloat(entry.start);
-          prob = fromFloat(entry.end - entry.start);
-          break;
-        }
+      if (dist.length > 0) {
+        cumBefore = fromFloat(dist[0].start);
+        prob = fromFloat(dist[0].end - dist[0].start);
       }
 
       // Map back to parent's coordinate frame.
@@ -139,26 +133,20 @@ export async function normalizeCursor<T>(
 export async function cursorToGlobal<T>(
   model: LanguageModel<readonly T[], T>,
   state: Cursor<T>,
-  tokenEquals?: (a: T, b: T) => boolean,
 ): Promise<{ x: number; y: number }> {
-  const eq = tokenEquals ?? ((a: T, b: T): boolean => a === b);
-
   let size: Rat = ONE;
   let top: Rat = ZERO;
 
   for (let i = 0; i < state.prefix.length; i++) {
     const parentPrefix = state.prefix.slice(0, i);
-    const dist = await model(parentPrefix, 0, 1, 0);
     const token = state.prefix[i];
+    const dist = await model(parentPrefix, 0, 1, 0, token);
 
     let cumBefore: Rat = ZERO;
     let prob: Rat = ZERO;
-    for (const entry of dist) {
-      if (eq(entry.token, token)) {
-        cumBefore = fromFloat(entry.start);
-        prob = fromFloat(entry.end - entry.start);
-        break;
-      }
+    if (dist.length > 0) {
+      cumBefore = fromFloat(dist[0].start);
+      prob = fromFloat(dist[0].end - dist[0].start);
     }
 
     top = add(top, mul(cumBefore, size));
