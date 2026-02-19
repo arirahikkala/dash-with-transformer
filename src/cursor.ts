@@ -18,6 +18,7 @@ import {
 } from "./rational";
 
 import type { LanguageModel, Cursor } from "./types";
+import { first } from "./types";
 
 export interface NormalizeOptions {
   /** Stop descending when prefix reaches this length.  Default 100. */
@@ -60,13 +61,13 @@ export async function normalizeCursor<T>(
     // --- Phase 1: ascend if out of the current square ---
     if (oob && prefix.length > 0) {
       const lastToken = prefix.pop()!;
-      const dist = await model(prefix, 0, 1, 0, lastToken);
+      const tokenResult = await first(model(prefix, 0, 1, 0, lastToken));
 
       let cumBefore: Rat = ZERO;
       let prob: Rat = ZERO;
-      if (dist.length > 0) {
-        cumBefore = fromFloat(dist[0].start);
-        prob = fromFloat(dist[0].end - dist[0].start);
+      if (tokenResult) {
+        cumBefore = fromFloat(tokenResult.start);
+        prob = fromFloat(tokenResult.end - tokenResult.start);
       }
 
       // Map back to parent's coordinate frame.
@@ -89,12 +90,9 @@ export async function normalizeCursor<T>(
     if (prefix.length >= maxDepth) break;
 
     const yf = toFloat(y);
-    const dist = await model(prefix, yf, yf, 0);
-    if (dist.length === 0) break;
-
     let descended = false;
 
-    for (const entry of dist) {
+    for await (const entry of model(prefix, yf, yf, 0)) {
       const p = fromFloat(entry.end - entry.start);
       if (toFloat(p) <= 0) continue;
 
@@ -141,13 +139,13 @@ export async function cursorToGlobal<T>(
   for (let i = 0; i < state.prefix.length; i++) {
     const parentPrefix = state.prefix.slice(0, i);
     const token = state.prefix[i];
-    const dist = await model(parentPrefix, 0, 1, 0, token);
+    const tokenResult = await first(model(parentPrefix, 0, 1, 0, token));
 
     let cumBefore: Rat = ZERO;
     let prob: Rat = ZERO;
-    if (dist.length > 0) {
-      cumBefore = fromFloat(dist[0].start);
-      prob = fromFloat(dist[0].end - dist[0].start);
+    if (tokenResult) {
+      cumBefore = fromFloat(tokenResult.start);
+      prob = fromFloat(tokenResult.end - tokenResult.start);
     }
 
     top = add(top, mul(cumBefore, size));

@@ -149,13 +149,13 @@ async function expandMultiByte(
 export function fromByteLevelModel(
   byteLevelModel: ByteLevelModel,
 ): LanguageModel<readonly number[], number> {
-  return async (
+  return async function* (
     prefix: readonly number[],
     rangeStart: number,
     rangeEnd: number,
     minSize: number,
     specificToken?: number,
-  ): Promise<readonly TokenProb<number>[]> => {
+  ) {
     const bytePrefix = codepointsToUtf8(prefix);
 
     // Fast path: look up a single codepoint's extent.
@@ -164,7 +164,7 @@ export function fromByteLevelModel(
       const leadByte = targetBytes[0];
 
       const firstByteDist = await byteLevelModel(bytePrefix);
-      if (firstByteDist[leadByte] === 0) return [];
+      if (firstByteDist[leadByte] === 0) return;
 
       // Cumulative start for the lead byte.
       let cumStart: Rat = ZERO;
@@ -184,7 +184,7 @@ export function fromByteLevelModel(
         const dist = await byteLevelModel(queryPrefix);
         const targetByte = targetBytes[i];
 
-        if (dist[targetByte] === 0) return [];
+        if (dist[targetByte] === 0) return;
 
         for (let b = 0; b < targetByte; b++) {
           if (dist[b] > 0) {
@@ -196,7 +196,8 @@ export function fromByteLevelModel(
 
       const start = toFloat(cumStart);
       const end = toFloat(add(cumStart, probSoFar));
-      return [{ token: specificToken, start, end }];
+      yield { token: specificToken, start, end };
+      return;
     }
 
     // 1. First-byte distribution (1 model call).
@@ -218,16 +219,14 @@ export function fromByteLevelModel(
       }
     }
 
-    const result: TokenProb<number>[] = [];
-
-    // 3. Single-byte codepoints (0x00–0x7F): emit directly.
+    // 3. Single-byte codepoints (0x00–0x7F): yield directly.
     for (let b = 0; b <= 0x7f; b++) {
       if (firstByteDist[b] === 0) continue;
       const start = toFloat(firstByteCumStart[b]);
       const end = toFloat(add(firstByteCumStart[b], firstByteProbs[b]));
       if (end < rangeStart || start > rangeEnd) continue;
       if (end - start < minSize) continue;
-      result.push({ token: b, start, end });
+      yield { token: b, start, end };
     }
 
     // 4. Multi-byte groups: decide which need expansion.
@@ -260,28 +259,26 @@ export function fromByteLevelModel(
       });
     }
 
-    // 5. Expand all needed groups in parallel (filtering happens inside).
-    const expansions = await Promise.all(
-      groupsToExpand.map((g) =>
-        expandMultiByte(
-          byteLevelModel,
-          bytePrefix,
-          [g.firstByte],
-          g.totalBytes,
-          g.prob,
-          g.cumStart,
-          rangeStart,
-          rangeEnd,
-          minSize,
-        ),
+    // 5. Expand all needed groups in parallel, yield in group order.
+    const expansionPromises = groupsToExpand.map((g) =>
+      expandMultiByte(
+        byteLevelModel,
+        bytePrefix,
+        [g.firstByte],
+        g.totalBytes,
+        g.prob,
+        g.cumStart,
+        rangeStart,
+        rangeEnd,
+        minSize,
       ),
     );
 
-    // 6. Append filtered results.
-    for (const entries of expansions) {
-      result.push(...entries);
+    for (const promise of expansionPromises) {
+      const entries = await promise;
+      for (const entry of entries) {
+        yield entry;
+      }
     }
-
-    return result;
   };
 }

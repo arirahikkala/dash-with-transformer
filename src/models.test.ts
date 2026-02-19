@@ -7,6 +7,15 @@ import { fromByteLevelModel } from "./models";
 
 type ByteLevelModel = (bytePrefix: Uint8Array) => Promise<number[]>;
 
+/** Collect all items from an async iterable into an array. */
+async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {
+  const result: T[] = [];
+  for await (const item of iter) {
+    result.push(item);
+  }
+  return result;
+}
+
 /** Build a 256-element probability array with specific non-zero entries. */
 function makeDist(entries: Record<number, number>): number[] {
   const dist = new Array(256).fill(0);
@@ -61,7 +70,7 @@ describe("ASCII-only model", () => {
 
   it("returns correct tokens and extents", async () => {
     const lm = fromByteLevelModel(makeMockModel(table));
-    const result = await lm([], 0, 1, 0);
+    const result = await collect(lm([], 0, 1, 0));
 
     expect(result).toHaveLength(3);
     expect(result[0]).toEqual({ token: 97, start: 0, end: 0.5 });
@@ -75,7 +84,7 @@ describe("ASCII-only model", () => {
     const lm = fromByteLevelModel(
       makeMockModel({ "": makeDist({ 99: 0.25, 97: 0.5, 98: 0.25 }) }),
     );
-    const tokens = (await lm([], 0, 1, 0)).map((e) => e.token);
+    const tokens = (await collect(lm([], 0, 1, 0))).map((e) => e.token);
     expect(tokens).toEqual([97, 98, 99]);
   });
 });
@@ -93,7 +102,7 @@ describe("two-byte codepoints", () => {
 
   it("computes product probabilities correctly", async () => {
     const lm = fromByteLevelModel(makeMockModel(table));
-    const result = await lm([], 0, 1, 0);
+    const result = await collect(lm([], 0, 1, 0));
 
     expect(result).toHaveLength(3);
     expect(result[0]).toEqual({ token: 97, start: 0, end: 0.5 }); // a
@@ -116,7 +125,7 @@ describe("three-byte codepoints", () => {
 
   it("resolves to the correct codepoint", async () => {
     const lm = fromByteLevelModel(makeMockModel(table));
-    const result = await lm([], 0, 1, 0);
+    const result = await collect(lm([], 0, 1, 0));
 
     expect(result).toHaveLength(1);
     expect(result[0].token).toBe(0x4e2d);
@@ -140,7 +149,7 @@ describe("four-byte codepoints", () => {
 
   it("resolves to the correct codepoint", async () => {
     const lm = fromByteLevelModel(makeMockModel(table));
-    const result = await lm([], 0, 1, 0);
+    const result = await collect(lm([], 0, 1, 0));
 
     expect(result).toHaveLength(1);
     expect(result[0].token).toBe(0x1f600);
@@ -164,7 +173,7 @@ describe("mixed codepoints", () => {
 
   it("orders and positions all codepoints correctly", async () => {
     const lm = fromByteLevelModel(makeMockModel(table));
-    const result = await lm([], 0, 1, 0);
+    const result = await collect(lm([], 0, 1, 0));
 
     expect(result).toHaveLength(3);
     expect(result[0]).toEqual({ token: 97, start: 0, end: 0.5 }); // a
@@ -174,7 +183,7 @@ describe("mixed codepoints", () => {
 
   it("produces contiguous entries", async () => {
     const lm = fromByteLevelModel(makeMockModel(table));
-    const result = await lm([], 0, 1, 0);
+    const result = await collect(lm([], 0, 1, 0));
 
     expect(result[0].start).toBe(0);
     for (let i = 1; i < result.length; i++) {
@@ -198,7 +207,7 @@ describe("range filtering", () => {
   it("excludes entries outside the range", async () => {
     const lm = fromByteLevelModel(makeMockModel(table));
     // [0.51, 0.74] excludes a (ends at 0.5) and é (starts at 0.75)
-    const result = await lm([], 0.51, 0.74, 0);
+    const result = await collect(lm([], 0.51, 0.74, 0));
 
     expect(result).toHaveLength(1);
     expect(result[0].token).toBe(0xe8); // è
@@ -207,7 +216,7 @@ describe("range filtering", () => {
   it("includes entries that partially overlap", async () => {
     const lm = fromByteLevelModel(makeMockModel(table));
     // [0.4, 0.8) overlaps a, è, é
-    const result = await lm([], 0.4, 0.8, 0);
+    const result = await collect(lm([], 0.4, 0.8, 0));
     const tokens = result.map((e) => e.token);
     expect(tokens).toEqual([97, 0xe8, 0xe9]);
   });
@@ -227,7 +236,7 @@ describe("closed-range semantics", () => {
   it("point query returns the containing node", async () => {
     const lm = fromByteLevelModel(makeMockModel(table));
     // 0.6 is inside è=[0.5, 0.75]
-    const result = await lm([], 0.6, 0.6, 0);
+    const result = await collect(lm([], 0.6, 0.6, 0));
 
     expect(result).toHaveLength(1);
     expect(result[0].token).toBe(0xe8);
@@ -236,7 +245,7 @@ describe("closed-range semantics", () => {
   it("point query at a boundary returns both adjacent nodes", async () => {
     const lm = fromByteLevelModel(makeMockModel(table));
     // 0.5 is exactly at the boundary between a=[0, 0.5] and è=[0.5, 0.75]
-    const result = await lm([], 0.5, 0.5, 0);
+    const result = await collect(lm([], 0.5, 0.5, 0));
 
     expect(result).toHaveLength(2);
     expect(result[0].token).toBe(97); // a (end touches)
@@ -246,7 +255,7 @@ describe("closed-range semantics", () => {
   it("point query at a multi-byte boundary returns both adjacent nodes", async () => {
     const lm = fromByteLevelModel(makeMockModel(table));
     // 0.75 is exactly at the boundary between è=[0.5, 0.75] and é=[0.75, 1.0]
-    const result = await lm([], 0.75, 0.75, 0);
+    const result = await collect(lm([], 0.75, 0.75, 0));
 
     expect(result).toHaveLength(2);
     expect(result[0].token).toBe(0xe8); // è (end touches)
@@ -256,7 +265,7 @@ describe("closed-range semantics", () => {
   it("closed range includes nodes touching the boundary", async () => {
     const lm = fromByteLevelModel(makeMockModel(table));
     // [0.5, 0.75] touches a at its end AND é at its start
-    const result = await lm([], 0.5, 0.75, 0);
+    const result = await collect(lm([], 0.5, 0.75, 0));
 
     expect(result).toHaveLength(3);
     expect(result.map((e) => e.token)).toEqual([97, 0xe8, 0xe9]);
@@ -264,7 +273,7 @@ describe("closed-range semantics", () => {
 
   it("point query at 0 returns the first node", async () => {
     const lm = fromByteLevelModel(makeMockModel(table));
-    const result = await lm([], 0, 0, 0);
+    const result = await collect(lm([], 0, 0, 0));
 
     expect(result).toHaveLength(1);
     expect(result[0].token).toBe(97);
@@ -272,7 +281,7 @@ describe("closed-range semantics", () => {
 
   it("point query at 1 returns the last node", async () => {
     const lm = fromByteLevelModel(makeMockModel(table));
-    const result = await lm([], 1, 1, 0);
+    const result = await collect(lm([], 1, 1, 0));
 
     expect(result).toHaveLength(1);
     expect(result[0].token).toBe(0xe9);
@@ -296,7 +305,7 @@ describe("closed-range with deep multi-byte", () => {
   it("point query at sub-group boundary returns both codepoints", async () => {
     const lm = fromByteLevelModel(makeMockModel(table));
     // 0.5 is the boundary between 中=[0, 0.5] and 乀=[0.5, 1.0]
-    const result = await lm([], 0.5, 0.5, 0);
+    const result = await collect(lm([], 0.5, 0.5, 0));
 
     expect(result).toHaveLength(2);
     expect(result[0].token).toBe(0x4e2d); // 中
@@ -305,7 +314,7 @@ describe("closed-range with deep multi-byte", () => {
 
   it("point query inside a sub-group returns just that codepoint", async () => {
     const lm = fromByteLevelModel(makeMockModel(table));
-    const result = await lm([], 0.25, 0.25, 0);
+    const result = await collect(lm([], 0.25, 0.25, 0));
 
     expect(result).toHaveLength(1);
     expect(result[0].token).toBe(0x4e2d);
@@ -325,7 +334,7 @@ describe("minSize filtering", () => {
   it("excludes entries below minSize", async () => {
     const lm = fromByteLevelModel(makeMockModel(table));
     // a=0.5, è=0.25, é=0.25  —  minSize 0.3 keeps only a
-    const result = await lm([], 0, 1, 0.3);
+    const result = await collect(lm([], 0, 1, 0.3));
 
     expect(result).toHaveLength(1);
     expect(result[0].token).toBe(97);
@@ -333,7 +342,7 @@ describe("minSize filtering", () => {
 
   it("keeps entries at exactly minSize", async () => {
     const lm = fromByteLevelModel(makeMockModel(table));
-    const result = await lm([], 0, 1, 0.25);
+    const result = await collect(lm([], 0, 1, 0.25));
     expect(result).toHaveLength(3);
   });
 });
@@ -351,8 +360,8 @@ describe("extent determinism", () => {
   it("produces identical extents for different range queries", async () => {
     const lm = fromByteLevelModel(makeMockModel(table));
 
-    const full = await lm([], 0, 1, 0);
-    const narrow = await lm([], 0.6, 0.9, 0);
+    const full = await collect(lm([], 0, 1, 0));
+    const narrow = await collect(lm([], 0.6, 0.9, 0));
 
     // Both queries should include è — verify same extent.
     const eFull = full.find((e) => e.token === 0xe8)!;
@@ -365,8 +374,8 @@ describe("extent determinism", () => {
   it("produces identical extents for different minSize queries", async () => {
     const lm = fromByteLevelModel(makeMockModel(table));
 
-    const all = await lm([], 0, 1, 0);
-    const filtered = await lm([], 0, 1, 0.2);
+    const all = await collect(lm([], 0, 1, 0));
+    const filtered = await collect(lm([], 0, 1, 0.2));
 
     const aAll = all.find((e) => e.token === 97)!;
     const aFiltered = filtered.find((e) => e.token === 97)!;
@@ -390,7 +399,7 @@ describe("call minimisation", () => {
     const lm = fromByteLevelModel(model);
 
     // range [0, 0.49] — multi-byte group starts at 0.5, excluded
-    await lm([], 0, 0.49, 0);
+    await collect(lm([], 0, 0.49, 0));
     expect(calls).toEqual([""]);
   });
 
@@ -405,7 +414,7 @@ describe("call minimisation", () => {
     const lm = fromByteLevelModel(model);
 
     // minSize 0.3 means both multi-byte groups (0.25 each) are skipped
-    await lm([], 0, 1, 0.3);
+    await collect(lm([], 0, 1, 0.3));
     expect(calls).toEqual([""]);
   });
 
@@ -422,7 +431,7 @@ describe("call minimisation", () => {
     const lm = fromByteLevelModel(model);
 
     // range [0.51, 0.74] — only 0xC3 group overlaps
-    await lm([], 0.51, 0.74, 0);
+    await collect(lm([], 0.51, 0.74, 0));
 
     expect(calls).toContain(""); // first-byte
     expect(calls).toContain("c3"); // expanded
@@ -443,7 +452,7 @@ describe("call minimisation", () => {
     const lm = fromByteLevelModel(model);
 
     // range [0, 0.49] covers only the B8 sub-group
-    await lm([], 0, 0.49, 0);
+    await collect(lm([], 0, 0.49, 0));
 
     expect(calls).toContain(""); // first-byte
     expect(calls).toContain("e4"); // second-byte dist
@@ -462,7 +471,7 @@ describe("call minimisation", () => {
     const lm = fromByteLevelModel(model);
 
     // minSize 0.3 — B9 sub-group (prob 0.25) is below threshold
-    await lm([], 0, 1, 0.3);
+    await collect(lm([], 0, 1, 0.3));
 
     expect(calls).toContain("e4b8"); // 0.75 ≥ 0.3 → expanded
     expect(calls).not.toContain("e4b9"); // 0.25 < 0.3 → skipped
@@ -483,7 +492,7 @@ describe("call minimisation", () => {
     const lm = fromByteLevelModel(model);
 
     // range [0, 0.49] — only the 0x98 sub-group
-    await lm([], 0, 0.49, 0);
+    await collect(lm([], 0, 0.49, 0));
 
     expect(calls).toContain("f09f98");
     expect(calls).not.toContain("f09f99");
@@ -516,7 +525,7 @@ describe("parallelism", () => {
     };
 
     const lm = fromByteLevelModel(model);
-    await lm([], 0, 1, 0);
+    await collect(lm([], 0, 1, 0));
 
     // The two continuation calls (c2, c3) should overlap.
     expect(maxConcurrency).toBeGreaterThanOrEqual(2);
@@ -534,7 +543,7 @@ describe("codepoint prefix encoding", () => {
     });
     const lm = fromByteLevelModel(model);
 
-    const result = await lm([0x61], 0, 1, 0);
+    const result = await collect(lm([0x61], 0, 1, 0));
     expect(calls).toEqual(["61"]);
     expect(result[0].token).toBe(98);
   });
@@ -546,7 +555,7 @@ describe("codepoint prefix encoding", () => {
     });
     const lm = fromByteLevelModel(model);
 
-    const result = await lm([0xe9], 0, 1, 0);
+    const result = await collect(lm([0xe9], 0, 1, 0));
     expect(calls).toEqual(["c3a9"]);
     expect(result[0].token).toBe(97);
   });
@@ -558,7 +567,7 @@ describe("codepoint prefix encoding", () => {
     });
     const lm = fromByteLevelModel(model);
 
-    const result = await lm([97, 0xe9], 0, 1, 0);
+    const result = await collect(lm([97, 0xe9], 0, 1, 0));
     expect(calls).toEqual(["61c3a9"]);
     expect(result[0].token).toBe(98);
   });
@@ -573,13 +582,13 @@ describe("edge cases", () => {
     const lm = fromByteLevelModel(
       makeMockModel({ "": new Array(256).fill(0) }),
     );
-    const result = await lm([], 0, 1, 0);
+    const result = await collect(lm([], 0, 1, 0));
     expect(result).toHaveLength(0);
   });
 
   it("handles a single ASCII token", async () => {
     const lm = fromByteLevelModel(makeMockModel({ "": makeDist({ 65: 1 }) }));
-    const result = await lm([], 0, 1, 0);
+    const result = await collect(lm([], 0, 1, 0));
 
     expect(result).toHaveLength(1);
     expect(result[0]).toEqual({ token: 65, start: 0, end: 1 });
@@ -597,7 +606,7 @@ describe("edge cases", () => {
       f09f98: makeDist({ 0x80: 1.0 }),
     };
     const lm = fromByteLevelModel(makeMockModel(table));
-    const result = await lm([], 0, 1, 0);
+    const result = await collect(lm([], 0, 1, 0));
 
     expect(result.map((e) => e.token)).toEqual([0xe9, 0x4e2d, 0x1f600]);
     expect(result[0].start).toBe(0);
@@ -617,7 +626,7 @@ describe("edge cases", () => {
       e4b9: makeDist({ 0x80: 1.0 }),
     };
     const lm = fromByteLevelModel(makeMockModel(table));
-    const result = await lm([], 0, 1, 0);
+    const result = await collect(lm([], 0, 1, 0));
 
     // E4 B8 AD = U+4E2D ('中'), E4 B9 80 = U+4E40 ('乀')
     expect(result).toHaveLength(2);
@@ -634,7 +643,7 @@ describe("edge cases", () => {
     });
     const lm = fromByteLevelModel(model);
 
-    await lm([], 0, 1, 0);
+    await collect(lm([], 0, 1, 0));
     expect(calls).toEqual([""]);
   });
 });

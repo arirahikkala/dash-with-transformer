@@ -40,7 +40,7 @@ export type LanguageModel<P, T> = (
   rangeEnd: number,
   minSize: number,
   specificToken?: T,
-) => Promise<readonly TokenProb<T>[]>;
+) => AsyncIterable<TokenProb<T>>;
 
 /**
  * Adapt a simple probability-list model into a full LanguageModel
@@ -49,9 +49,14 @@ export type LanguageModel<P, T> = (
 export function adaptModel<P, T>(
   inner: (prefix: P) => Promise<readonly { token: T; probability: number }[]>,
 ): LanguageModel<P, T> {
-  return async (prefix, rangeStart, rangeEnd, minSize, specificToken) => {
+  return async function* (
+    prefix,
+    rangeStart,
+    rangeEnd,
+    minSize,
+    specificToken,
+  ) {
     const dist = await inner(prefix);
-    const result: TokenProb<T>[] = [];
     let cum = 0;
     for (const entry of dist) {
       const start = cum;
@@ -59,15 +64,15 @@ export function adaptModel<P, T>(
       cum = end;
       if (specificToken !== undefined) {
         if (entry.token === specificToken) {
-          return [{ token: entry.token, start, end }];
+          yield { token: entry.token, start, end };
+          return;
         }
         continue;
       }
       if (end < rangeStart || start > rangeEnd) continue;
       if (entry.probability < minSize) continue;
-      result.push({ token: entry.token, start, end });
+      yield { token: entry.token, start, end };
     }
-    return result;
   };
 }
 
@@ -89,7 +94,7 @@ export interface SceneNode<T> {
   /** Bottom edge in window-relative coordinates [0,1]. */
   y1: number;
   /** Recursively expanded children (next-token predictions). */
-  children: Promise<SceneNode<T>[]>;
+  children: AsyncIterable<SceneNode<T>>;
 }
 
 /** Display helpers for rendering tokens of type T. */
@@ -102,5 +107,13 @@ export interface TokenDisplay<T> {
 /** Everything needed to render one frame of the widget. */
 export interface Scene<T> {
   /** Top-level prediction nodes. */
-  children: SceneNode<T>[];
+  children: AsyncIterable<SceneNode<T>>;
+}
+
+/** Extract the first element from an async iterable, or undefined if empty. */
+export async function first<T>(iter: AsyncIterable<T>): Promise<T | undefined> {
+  for await (const item of iter) {
+    return item;
+  }
+  return undefined;
 }

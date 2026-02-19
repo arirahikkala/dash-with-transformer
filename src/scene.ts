@@ -22,6 +22,7 @@ import {
 } from "./rational";
 
 import type { LanguageModel, Cursor, SceneNode, Scene } from "./types";
+import { first } from "./types";
 
 // ---------------------------------------------------------------------------
 // Phase 2: Ascend to scene root (Rat arithmetic)
@@ -64,13 +65,13 @@ async function ascendToSceneRoot<T>(
 
   while (mutablePrefix.length > 0) {
     const lastToken = mutablePrefix.pop()!;
-    const tokenDist = await model(mutablePrefix, 0, 1, 0, lastToken);
+    const tokenResult = await first(model(mutablePrefix, 0, 1, 0, lastToken));
 
     let cumBefore: Rat = ZERO;
     let prob: Rat = ZERO;
-    if (tokenDist.length > 0) {
-      cumBefore = fromFloat(tokenDist[0].start);
-      prob = fromFloat(tokenDist[0].end - tokenDist[0].start);
+    if (tokenResult) {
+      cumBefore = fromFloat(tokenResult.start);
+      prob = fromFloat(tokenResult.end - tokenResult.start);
     }
 
     // Transform to parent's frame:
@@ -106,7 +107,7 @@ async function ascendToSceneRoot<T>(
  * @param offset  - y position of this node's top edge in window coords
  * @param absProb - absolute probability of this prefix (in scene root frame)
  */
-async function buildChildren<T>(
+async function* buildChildren<T>(
   model: LanguageModel<readonly T[], T>,
   prefix: readonly T[],
   scale: number,
@@ -115,8 +116,8 @@ async function buildChildren<T>(
   minAbsProb: number,
   depth: number,
   maxDepth: number,
-): Promise<SceneNode<T>[]> {
-  if (depth >= maxDepth) return [];
+): AsyncIterable<SceneNode<T>> {
+  if (depth >= maxDepth) return;
 
   // Map window [0,1] back to probability space for filtering.
   // y = offset + cumProb * scale  →  cumProb = (y − offset) / scale
@@ -124,9 +125,7 @@ async function buildChildren<T>(
   const rangeEnd = (1 - offset) / scale;
   const minSize = minAbsProb / absProb;
 
-  const dist = await model(prefix, rangeStart, rangeEnd, minSize);
-
-  return dist.map((entry) => {
+  for await (const entry of model(prefix, rangeStart, rangeEnd, minSize)) {
     const p = entry.end - entry.start;
     const y0 = offset + entry.start * scale;
     const y1 = offset + entry.end * scale;
@@ -144,8 +143,8 @@ async function buildChildren<T>(
       maxDepth,
     );
 
-    return { token: entry.token, y0, y1, children };
-  });
+    yield { token: entry.token, y0, y1, children };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -196,7 +195,7 @@ export async function buildScene<T>(
   const offset = -winTop * scale;
   const minAbsProb = minHeight * winHeight;
 
-  const children = await buildChildren(
+  const children = buildChildren(
     model,
     scenePrefix,
     scale,

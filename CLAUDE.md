@@ -76,4 +76,4 @@ Two implementations exist:
 - `src/render.ts` — `renderScene`: renders said content with a canvas renderer
 - `src/main.ts` — wires things together, displays widget, mouse-driven animation loop
 - `src/models.ts` — upconversion from byte-level model to Unicode codepoint LanguageModel
-- `src/backend.ts` — backend interface, request batching and caching 
+- `src/backend.ts` — backend interface, request batching and caching

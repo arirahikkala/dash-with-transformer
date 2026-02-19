@@ -11,13 +11,13 @@ export interface RenderOptions<T> {
 /** Render nodes as right-aligned squares, parent first then children on top. */
 async function renderNodes<T>(
   ctx: CanvasRenderingContext2D,
-  nodes: SceneNode<T>[],
+  nodes: AsyncIterable<SceneNode<T>>,
   width: number,
   height: number,
   opts: RenderOptions<T>,
   signal: AbortSignal,
 ): Promise<void> {
-  for (const node of nodes) {
+  for await (const node of nodes) {
     const py0 = node.y0 * height;
     const py1 = node.y1 * height;
     const side = py1 - py0;
@@ -46,9 +46,8 @@ async function renderNodes<T>(
     }
 
     // Children paint on top (smaller squares nested inside)
-    const children = await node.children;
     if (signal.aborted) return;
-    await renderNodes(ctx, children, width, height, opts, signal);
+    await renderNodes(ctx, node.children, width, height, opts, signal);
     if (signal.aborted) return;
   }
 }

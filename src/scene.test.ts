@@ -38,13 +38,22 @@ const empty = adaptModel<readonly string[], string>(async () => []);
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Collect all items from an async iterable into an array. */
+async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {
+  const result: T[] = [];
+  for await (const item of iter) {
+    result.push(item);
+  }
+  return result;
+}
+
 /** Collect all nodes in a scene tree via pre-order traversal. */
 async function allNodes<T>(scene: Scene<T>): Promise<SceneNode<T>[]> {
   const result: SceneNode<T>[] = [];
-  async function walk(nodes: SceneNode<T>[]) {
-    for (const n of nodes) {
+  async function walk(nodes: AsyncIterable<SceneNode<T>>) {
+    for await (const n of nodes) {
       result.push(n);
-      await walk(await n.children);
+      await walk(n.children);
     }
   }
   await walk(scene.children);
@@ -52,8 +61,9 @@ async function allNodes<T>(scene: Scene<T>): Promise<SceneNode<T>[]> {
 }
 
 /** Collect just top-level tokens. */
-function topTokens<T>(scene: Scene<T>): T[] {
-  return scene.children.map((n) => n.token);
+async function topTokens<T>(scene: Scene<T>): Promise<T[]> {
+  const children = await collect(scene.children);
+  return children.map((n) => n.token);
 }
 
 // ---------------------------------------------------------------------------
@@ -68,13 +78,13 @@ describe("buildScene", () => {
       // cursor.x = 0 means halfHeight = 1, so window = entire unit square
       const cursor: Cursor<string> = { prefix: [], x: 0, y: 0.5 };
       const scene = await buildScene(binary, cursor, 0.001);
-      expect(topTokens(scene)).toEqual(["A", "B"]);
+      expect(await topTokens(scene)).toEqual(["A", "B"]);
     });
 
     it("fully zoomed out with ternary model shows all three tokens", async () => {
       const cursor: Cursor<string> = { prefix: [], x: 0, y: 0.5 };
       const scene = await buildScene(ternary, cursor, 0.001);
-      expect(topTokens(scene)).toEqual(["X", "Y", "Z"]);
+      expect(await topTokens(scene)).toEqual(["X", "Y", "Z"]);
     });
 
     it("zoomed in shows subset of tokens", async () => {
@@ -91,13 +101,13 @@ describe("buildScene", () => {
       const cursor: Cursor<string> = { prefix: [], x: 0, y: 0.5 };
       const scene = await buildScene(binary, cursor, 0.001);
 
-      async function checkBounds(nodes: SceneNode<string>[]) {
-        for (const node of nodes) {
-          const children = await node.children;
+      async function checkBounds(nodes: AsyncIterable<SceneNode<string>>) {
+        for await (const node of nodes) {
+          const children = await collect(node.children);
           for (const child of children) {
             expect(child.y0).toBeGreaterThanOrEqual(node.y0 - 1e-10);
             expect(child.y1).toBeLessThanOrEqual(node.y1 + 1e-10);
-            await checkBounds([child]);
+            await checkBounds(child.children);
           }
         }
       }
@@ -149,12 +159,13 @@ describe("buildScene", () => {
 
       // Binary: A=[0, 0.5), B=[0.5, 1)
       // Window maps unit square to [0,1], so these should be exact
-      expect(scene.children[0].token).toBe("A");
-      expect(scene.children[0].y0).toBeCloseTo(0.25);
-      expect(scene.children[0].y1).toBeCloseTo(0.5);
-      expect(scene.children[1].token).toBe("B");
-      expect(scene.children[1].y0).toBeCloseTo(0.5);
-      expect(scene.children[1].y1).toBeCloseTo(0.75);
+      const children = await collect(scene.children);
+      expect(children[0].token).toBe("A");
+      expect(children[0].y0).toBeCloseTo(0.25);
+      expect(children[0].y1).toBeCloseTo(0.5);
+      expect(children[1].token).toBe("B");
+      expect(children[1].y0).toBeCloseTo(0.5);
+      expect(children[1].y1).toBeCloseTo(0.75);
     });
 
     it("ternary model: y positions reflect cumulative probabilities", async () => {
@@ -167,17 +178,18 @@ describe("buildScene", () => {
       const cursor: Cursor<string> = { prefix: [], x: 0, y: 0.5 };
       const scene = await buildScene(ternary, cursor, 0.001);
 
-      expect(scene.children[0].token).toBe("X");
-      expect(scene.children[0].y0).toBeCloseTo(0.25);
-      expect(scene.children[0].y1).toBeCloseTo(0.35);
+      const children = await collect(scene.children);
+      expect(children[0].token).toBe("X");
+      expect(children[0].y0).toBeCloseTo(0.25);
+      expect(children[0].y1).toBeCloseTo(0.35);
 
-      expect(scene.children[1].token).toBe("Y");
-      expect(scene.children[1].y0).toBeCloseTo(0.35);
-      expect(scene.children[1].y1).toBeCloseTo(0.6);
+      expect(children[1].token).toBe("Y");
+      expect(children[1].y0).toBeCloseTo(0.35);
+      expect(children[1].y1).toBeCloseTo(0.6);
 
-      expect(scene.children[2].token).toBe("Z");
-      expect(scene.children[2].y0).toBeCloseTo(0.6);
-      expect(scene.children[2].y1).toBeCloseTo(0.75);
+      expect(children[2].token).toBe("Z");
+      expect(children[2].y0).toBeCloseTo(0.6);
+      expect(children[2].y1).toBeCloseTo(0.75);
     });
 
     it("zoomed in: cursor centered means crosshairs at 0.5", async () => {
@@ -186,7 +198,7 @@ describe("buildScene", () => {
       // Scale=1, offset=0.  Children of ["A"]: A at [0, 0.5], B at [0.5, 1].
       const cursor: Cursor<string> = { prefix: ["A"], x: 0.5, y: 0.5 };
       const scene = await buildScene(binary, cursor, 0.001);
-      const nodes = scene.children;
+      const nodes = await collect(scene.children);
       expect(nodes.length).toBe(2);
       expect(nodes[0].token).toBe("A");
       expect(nodes[0].y0).toBeCloseTo(0);
@@ -210,7 +222,7 @@ describe("buildScene", () => {
       const scene2 = await buildScene(ternary, cursor, 0.2);
       // minAbsProb = 0.2 * 2 = 0.4
       // X=0.2 < 0.4 → culled. Y=0.5 ≥ 0.4 → kept. Z=0.3 < 0.4 → culled.
-      const tokens = topTokens(scene2);
+      const tokens = await topTokens(scene2);
       expect(tokens).toEqual(["Y"]);
     });
 
@@ -223,11 +235,10 @@ describe("buildScene", () => {
       // Level 0: absProb=1, p=0.5 → childAbsProb=0.5 ≥ 0.2 → kept
       // Level 1: absProb=0.5, p=0.5 → childAbsProb=0.25 ≥ 0.2 → kept
       // Level 2: absProb=0.25, p=0.5 → childAbsProb=0.125 < 0.2 → culled
-      async function measureDepth(nodes: SceneNode<string>[]): Promise<number> {
+      async function measureDepth(nodes: AsyncIterable<SceneNode<string>>): Promise<number> {
         let d = 0;
-        for (const n of nodes) {
-          const children = await n.children;
-          d = Math.max(d, 1 + (await measureDepth(children)));
+        for await (const n of nodes) {
+          d = Math.max(d, 1 + (await measureDepth(n.children)));
         }
         return d;
       }
@@ -237,11 +248,10 @@ describe("buildScene", () => {
     it("very small minHeight allows deep recursion", async () => {
       const cursor: Cursor<string> = { prefix: [], x: 0, y: 0.5 };
       const scene = await buildScene(binary, cursor, 0.0001);
-      async function measureDepth(nodes: SceneNode<string>[]): Promise<number> {
+      async function measureDepth(nodes: AsyncIterable<SceneNode<string>>): Promise<number> {
         let d = 0;
-        for (const n of nodes) {
-          const children = await n.children;
-          d = Math.max(d, 1 + (await measureDepth(children)));
+        for await (const n of nodes) {
+          d = Math.max(d, 1 + (await measureDepth(n.children)));
         }
         return d;
       }
@@ -264,13 +274,13 @@ describe("buildScene", () => {
       const cursor: Cursor<string> = { prefix: [], x: 0, y: 0.5 };
       const scene = await buildScene(ternary, cursor, 0.01);
 
-      async function checkSiblings(nodes: SceneNode<string>[]) {
-        for (let i = 1; i < nodes.length; i++) {
-          expect(nodes[i].y0).toBeGreaterThanOrEqual(nodes[i - 1].y1 - 1e-10);
+      async function checkSiblings(nodes: AsyncIterable<SceneNode<string>>) {
+        const collected = await collect(nodes);
+        for (let i = 1; i < collected.length; i++) {
+          expect(collected[i].y0).toBeGreaterThanOrEqual(collected[i - 1].y1 - 1e-10);
         }
-        for (const n of nodes) {
-          const children = await n.children;
-          await checkSiblings(children);
+        for (const n of collected) {
+          await checkSiblings(n.children);
         }
       }
       await checkSiblings(scene.children);
@@ -293,13 +303,14 @@ describe("buildScene", () => {
     it("cursor.x = 0 gives fully zoomed out view", async () => {
       const cursor: Cursor<string> = { prefix: [], x: 0, y: 0.5 };
       const scene = await buildScene(binary, cursor, 0.01);
-      expect(scene.children.length).toBe(2);
+      const children = await collect(scene.children);
+      expect(children.length).toBe(2);
     });
 
     it("empty model produces empty scene", async () => {
       const cursor: Cursor<string> = { prefix: [], x: 0, y: 0.5 };
       const scene = await buildScene(empty, cursor, 0.01);
-      expect(scene.children).toEqual([]);
+      expect(await collect(scene.children)).toEqual([]);
     });
 
     it("deterministic model stops at maxDepth", async () => {
@@ -308,11 +319,10 @@ describe("buildScene", () => {
         maxDepth: 5,
       });
       // The single token has probability 1, so it recurses until maxDepth.
-      async function measureDepth(nodes: SceneNode<string>[]): Promise<number> {
+      async function measureDepth(nodes: AsyncIterable<SceneNode<string>>): Promise<number> {
         let d = 0;
-        for (const n of nodes) {
-          const children = await n.children;
-          d = Math.max(d, 1 + (await measureDepth(children)));
+        for await (const n of nodes) {
+          d = Math.max(d, 1 + (await measureDepth(n.children)));
         }
         return d;
       }
@@ -326,9 +336,10 @@ describe("buildScene", () => {
       ]);
       const cursor: Cursor<number> = { prefix: [], x: 0, y: 0.5 };
       const scene = await buildScene(numModel, cursor, 0.01);
-      expect(scene.children.length).toBe(2);
-      expect(scene.children[0].token).toBe(1);
-      expect(scene.children[1].token).toBe(2);
+      const children = await collect(scene.children);
+      expect(children.length).toBe(2);
+      expect(children[0].token).toBe(1);
+      expect(children[1].token).toBe(2);
     });
   });
 
@@ -370,10 +381,11 @@ describe("buildScene", () => {
       const prefix = Array<string>(5).fill("A");
       const cursor: Cursor<string> = { prefix, x: 0.9, y: 0.25 };
       const scene = await buildScene(binary, cursor, 0.01);
-      expect(scene.children.length).toBe(1);
-      expect(scene.children[0].token).toBe("A");
+      const children = await collect(scene.children);
+      expect(children.length).toBe(1);
+      expect(children[0].token).toBe("A");
       // A's children (at prefix depth 6) are both visible
-      const inner = await scene.children[0].children;
+      const inner = await collect(children[0].children);
       expect(inner.length).toBe(2);
       expect(inner[0].token).toBe("A");
       expect(inner[1].token).toBe("B");
@@ -386,9 +398,10 @@ describe("buildScene", () => {
       const prefix = Array<string>(5).fill("A");
       const cursor: Cursor<string> = { prefix, x: 0.9, y: 0.5 };
       const scene = await buildScene(binary, cursor, 0.01);
-      expect(scene.children.length).toBe(2);
-      expect(scene.children[0].token).toBe("A");
-      expect(scene.children[1].token).toBe("B");
+      const children = await collect(scene.children);
+      expect(children.length).toBe(2);
+      expect(children[0].token).toBe("A");
+      expect(children[1].token).toBe("B");
     });
   });
 });
