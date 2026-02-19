@@ -235,7 +235,9 @@ describe("buildScene", () => {
       // Level 0: absProb=1, p=0.5 → childAbsProb=0.5 ≥ 0.2 → kept
       // Level 1: absProb=0.5, p=0.5 → childAbsProb=0.25 ≥ 0.2 → kept
       // Level 2: absProb=0.25, p=0.5 → childAbsProb=0.125 < 0.2 → culled
-      async function measureDepth(nodes: AsyncIterable<SceneNode<string>>): Promise<number> {
+      async function measureDepth(
+        nodes: AsyncIterable<SceneNode<string>>,
+      ): Promise<number> {
         let d = 0;
         for await (const n of nodes) {
           d = Math.max(d, 1 + (await measureDepth(n.children)));
@@ -248,7 +250,9 @@ describe("buildScene", () => {
     it("very small minHeight allows deep recursion", async () => {
       const cursor: Cursor<string> = { prefix: [], x: 0, y: 0.5 };
       const scene = await buildScene(binary, cursor, 0.0001);
-      async function measureDepth(nodes: AsyncIterable<SceneNode<string>>): Promise<number> {
+      async function measureDepth(
+        nodes: AsyncIterable<SceneNode<string>>,
+      ): Promise<number> {
         let d = 0;
         for await (const n of nodes) {
           d = Math.max(d, 1 + (await measureDepth(n.children)));
@@ -277,7 +281,9 @@ describe("buildScene", () => {
       async function checkSiblings(nodes: AsyncIterable<SceneNode<string>>) {
         const collected = await collect(nodes);
         for (let i = 1; i < collected.length; i++) {
-          expect(collected[i].y0).toBeGreaterThanOrEqual(collected[i - 1].y1 - 1e-10);
+          expect(collected[i].y0).toBeGreaterThanOrEqual(
+            collected[i - 1].y1 - 1e-10,
+          );
         }
         for (const n of collected) {
           await checkSiblings(n.children);
@@ -319,7 +325,9 @@ describe("buildScene", () => {
         maxDepth: 5,
       });
       // The single token has probability 1, so it recurses until maxDepth.
-      async function measureDepth(nodes: AsyncIterable<SceneNode<string>>): Promise<number> {
+      async function measureDepth(
+        nodes: AsyncIterable<SceneNode<string>>,
+      ): Promise<number> {
         let d = 0;
         for await (const n of nodes) {
           d = Math.max(d, 1 + (await measureDepth(n.children)));

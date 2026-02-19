@@ -103,7 +103,7 @@ export function predictBytes(prefix: Uint8Array): Promise<number[]> {
     pending.push({ prefix, resolve, reject });
     if (!flushScheduled) {
       flushScheduled = true;
-      setTimeout(flush, 100);
+      setTimeout(flush, 10);
     }
   });
 }

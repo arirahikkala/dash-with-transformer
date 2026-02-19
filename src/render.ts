@@ -18,6 +18,7 @@ async function renderNodes<T>(
   signal: AbortSignal,
 ): Promise<void> {
   for await (const node of nodes) {
+    if (signal.aborted) return;
     const py0 = node.y0 * height;
     const py1 = node.y1 * height;
     const side = py1 - py0;
@@ -46,7 +47,6 @@ async function renderNodes<T>(
     }
 
     // Children paint on top (smaller squares nested inside)
-    if (signal.aborted) return;
     renderNodes(ctx, node.children, width, height, opts, signal);
   }
 }

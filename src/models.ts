@@ -1,7 +1,6 @@
 /**
  * Adapt a byte-level UTF-8 language model into a codepoint-level model.
  */
-import { type Rat, fromFloat, toFloat, add, mul, ZERO } from "./rational";
 import type { LanguageModel, TokenProb } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -68,15 +67,15 @@ async function expandMultiByte(
   bytePrefix: Uint8Array,
   partialBytes: number[],
   totalBytes: number,
-  probSoFar: Rat,
-  cumStart: Rat,
+  probSoFar: number,
+  cumStart: number,
   rangeStart: number,
   rangeEnd: number,
   minSize: number,
 ): Promise<TokenProb<number>[]> {
   if (partialBytes.length === totalBytes) {
-    const start = toFloat(cumStart);
-    const end = toFloat(add(cumStart, probSoFar));
+    const start = cumStart;
+    const end = cumStart + probSoFar;
     if (end < rangeStart || start > rangeEnd) return [];
     if (end - start < minSize) return [];
     return [{ token: decodeUtf8Bytes(partialBytes), start, end }];
@@ -92,14 +91,12 @@ async function expandMultiByte(
   let cum = cumStart;
   for (let b = 0; b < 256; b++) {
     if (dist[b] === 0) continue;
-    const subProb = mul(probSoFar, fromFloat(dist[b]));
+    const subProb = probSoFar * dist[b];
     const subCumStart = cum;
-    cum = add(cum, subProb);
+    cum += subProb;
 
-    const subStart = toFloat(subCumStart);
-    const subEnd = toFloat(cum);
-    if (subEnd < rangeStart || subStart > rangeEnd) continue;
-    if (subEnd - subStart < minSize) continue;
+    if (cum < rangeStart || subCumStart > rangeEnd) continue;
+    if (cum - subCumStart < minSize) continue;
 
     tasks.push(
       expandMultiByte(
@@ -118,6 +115,57 @@ async function expandMultiByte(
 
   const results = await Promise.all(tasks);
   return results.flat();
+}
+
+// ---------------------------------------------------------------------------
+// Specific-token lookup
+// ---------------------------------------------------------------------------
+
+/**
+ * Look up a single codepoint's cumulative extent in the byte-level model.
+ * Returns the TokenProb for the codepoint, or null if the model assigns it
+ * zero probability at any byte level.
+ */
+async function lookupSpecificToken(
+  model: ByteLevelModel,
+  bytePrefix: Uint8Array,
+  codepoint: number,
+): Promise<TokenProb<number> | null> {
+  const targetBytes = [...codepointsToUtf8([codepoint])];
+  const leadByte = targetBytes[0];
+
+  const firstByteDist = await model(bytePrefix);
+  if (firstByteDist[leadByte] === 0) return null;
+
+  // Cumulative start for the lead byte.
+  let cumStart = 0;
+  for (let b = 0; b < leadByte; b++) {
+    if (firstByteDist[b] > 0) {
+      cumStart += firstByteDist[b];
+    }
+  }
+  let probSoFar = firstByteDist[leadByte];
+
+  // For multi-byte sequences, descend through continuation bytes.
+  for (let i = 1; i < targetBytes.length; i++) {
+    const queryPrefix = new Uint8Array([
+      ...bytePrefix,
+      ...targetBytes.slice(0, i),
+    ]);
+    const dist = await model(queryPrefix);
+    const targetByte = targetBytes[i];
+
+    if (dist[targetByte] === 0) return null;
+
+    for (let b = 0; b < targetByte; b++) {
+      if (dist[b] > 0) {
+        cumStart += probSoFar * dist[b];
+      }
+    }
+    probSoFar *= dist[targetByte];
+  }
+
+  return { token: codepoint, start: cumStart, end: cumStart + probSoFar };
 }
 
 // ---------------------------------------------------------------------------
@@ -143,8 +191,9 @@ async function expandMultiByte(
  * Calls are maximally parallel: all continuation queries at the same
  * depth run concurrently via Promise.all.
  *
- * Cumulative extents use exact rational arithmetic so that a codepoint's
- * position depends only on the prefix, never the query window.
+ * Cumulative extents are deterministic (the loops accumulate over ALL
+ * non-zero bytes in fixed order, regardless of the query window) so
+ * that a codepoint's position depends only on the prefix.
  */
 export function fromByteLevelModel(
   byteLevelModel: ByteLevelModel,
@@ -160,70 +209,35 @@ export function fromByteLevelModel(
 
     // Fast path: look up a single codepoint's extent.
     if (specificToken !== undefined) {
-      const targetBytes = [...codepointsToUtf8([specificToken])];
-      const leadByte = targetBytes[0];
-
-      const firstByteDist = await byteLevelModel(bytePrefix);
-      if (firstByteDist[leadByte] === 0) return;
-
-      // Cumulative start for the lead byte.
-      let cumStart: Rat = ZERO;
-      for (let b = 0; b < leadByte; b++) {
-        if (firstByteDist[b] > 0) {
-          cumStart = add(cumStart, fromFloat(firstByteDist[b]));
-        }
-      }
-      let probSoFar: Rat = fromFloat(firstByteDist[leadByte]);
-
-      // For multi-byte sequences, descend through continuation bytes.
-      for (let i = 1; i < targetBytes.length; i++) {
-        const queryPrefix = new Uint8Array([
-          ...bytePrefix,
-          ...targetBytes.slice(0, i),
-        ]);
-        const dist = await byteLevelModel(queryPrefix);
-        const targetByte = targetBytes[i];
-
-        if (dist[targetByte] === 0) return;
-
-        for (let b = 0; b < targetByte; b++) {
-          if (dist[b] > 0) {
-            cumStart = add(cumStart, mul(probSoFar, fromFloat(dist[b])));
-          }
-        }
-        probSoFar = mul(probSoFar, fromFloat(dist[targetByte]));
-      }
-
-      const start = toFloat(cumStart);
-      const end = toFloat(add(cumStart, probSoFar));
-      yield { token: specificToken, start, end };
+      const result = await lookupSpecificToken(
+        byteLevelModel,
+        bytePrefix,
+        specificToken,
+      );
+      if (result) yield result;
       return;
     }
 
     // 1. First-byte distribution (1 model call).
     const firstByteDist = await byteLevelModel(bytePrefix);
 
-    // 2. Exact cumulative start position for every first-byte group.
+    // 2. Cumulative start position for every first-byte group.
     //    P(all codepoints starting with byte b) = P(b), so the
     //    cumulative over first bytes gives correct group boundaries.
-    const firstByteProbs: Rat[] = new Array(256);
-    const firstByteCumStart: Rat[] = new Array(256);
-    let cum: Rat = ZERO;
+    const firstByteCumStart: number[] = new Array(256);
+    let cum = 0;
     for (let b = 0; b < 256; b++) {
       firstByteCumStart[b] = cum;
       if (firstByteDist[b] > 0) {
-        firstByteProbs[b] = fromFloat(firstByteDist[b]);
-        cum = add(cum, firstByteProbs[b]);
-      } else {
-        firstByteProbs[b] = ZERO;
+        cum += firstByteDist[b];
       }
     }
 
     // 3. Single-byte codepoints (0x00–0x7F): yield directly.
     for (let b = 0; b <= 0x7f; b++) {
       if (firstByteDist[b] === 0) continue;
-      const start = toFloat(firstByteCumStart[b]);
-      const end = toFloat(add(firstByteCumStart[b], firstByteProbs[b]));
+      const start = firstByteCumStart[b];
+      const end = firstByteCumStart[b] + firstByteDist[b];
       if (end < rangeStart || start > rangeEnd) continue;
       if (end - start < minSize) continue;
       yield { token: b, start, end };
@@ -233,8 +247,8 @@ export function fromByteLevelModel(
     type GroupInfo = {
       firstByte: number;
       totalBytes: number;
-      prob: Rat;
-      cumStart: Rat;
+      prob: number;
+      cumStart: number;
     };
     const groupsToExpand: GroupInfo[] = [];
 
@@ -243,18 +257,17 @@ export function fromByteLevelModel(
       const totalBytes = utf8SeqLength(b);
       if (totalBytes === 0) continue; // invalid lead byte
 
-      const groupStartF = toFloat(firstByteCumStart[b]);
-      const groupEndF = toFloat(add(firstByteCumStart[b], firstByteProbs[b]));
+      const groupEnd = firstByteCumStart[b] + firstByteDist[b];
 
       // Skip groups entirely outside the visible range.
-      if (groupEndF < rangeStart || groupStartF > rangeEnd) continue;
+      if (groupEnd < rangeStart || firstByteCumStart[b] > rangeEnd) continue;
       // Skip groups where every codepoint is below minSize.
       if (firstByteDist[b] < minSize) continue;
 
       groupsToExpand.push({
         firstByte: b,
         totalBytes,
-        prob: firstByteProbs[b],
+        prob: firstByteDist[b],
         cumStart: firstByteCumStart[b],
       });
     }
