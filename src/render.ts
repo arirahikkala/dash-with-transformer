@@ -47,8 +47,7 @@ async function renderNodes<T>(
 
     // Children paint on top (smaller squares nested inside)
     if (signal.aborted) return;
-    await renderNodes(ctx, node.children, width, height, opts, signal);
-    if (signal.aborted) return;
+    renderNodes(ctx, node.children, width, height, opts, signal);
   }
 }
 
