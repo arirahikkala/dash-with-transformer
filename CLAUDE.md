@@ -65,7 +65,7 @@ Two implementations exist:
 - `adaptModel` (types.ts) — wraps a simple `prefix → {token, probability}[]` function, computing cumulative extents and applying filters. Used by the trigram model.
 - `fromByteLevelModel` (models.ts) — adapts a byte-level UTF-8 model into a codepoint-level model, using exact rational arithmetic for cumulative positions and recursive expansion of multi-byte sequences. This is the main production implementation.
 
-**Performance note:** the type is generic, but the main use at this time is representing a Unicode codepoint model via `fromByteLevelModel`. A query with `minSize=0`, full range, and no `specificToken` materializes the entire distribution over all Unicode codepoints present in the model — expanding every multi-byte group one byte-level query at a time. Hence, *every LanguageModel call must have a nonzero minSize or specificToken* set.
+**Performance note:** the type is generic, but the main use at this time is representing a Unicode codepoint model via `fromByteLevelModel`. A query with `minSize=0`, full range, and no `specificToken` materializes the entire distribution over all Unicode codepoints present in the model — expanding every multi-byte group one byte-level query at a time. Hence, _every LanguageModel call must have a nonzero minSize or specificToken_ set.
 
 ## Architecture
 

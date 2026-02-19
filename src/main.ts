@@ -1,5 +1,6 @@
-import type { Cursor } from "./types";
-import { loadTrigramModel } from "./trigram";
+import type { Cursor, TokenDisplay } from "./types";
+import { predictBytes } from "./backend";
+import { fromByteLevelModel } from "./models";
 import { normalizeCursor } from "./cursor";
 import { buildScene } from "./scene";
 import { renderScene } from "./render";
@@ -19,7 +20,19 @@ const SPEED = 2;
 const MAX_DT = 0.05;
 
 async function main() {
-  const { model, display } = await loadTrigramModel();
+  const model = fromByteLevelModel(predictBytes);
+  const display: TokenDisplay<number> = {
+    label(cp) {
+      if (cp === 32) return "\u25A1"; // □
+      if (cp === 10) return "\u23CE"; // ⏎
+      return String.fromCodePoint(cp);
+    },
+    color(cp) {
+      const hue = (cp * 137.508) % 360;
+      return `hsl(${hue}, 45%, 35%)`;
+    },
+    prefixToString: (prefix) => String.fromCodePoint(...prefix),
+  };
 
   const prefixEl = document.getElementById("prefix-display")!;
   const canvas = document.getElementById("dasher-canvas") as HTMLCanvasElement;

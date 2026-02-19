@@ -148,9 +148,9 @@ async function expandMultiByte(
  */
 export function fromByteLevelModel(
   byteLevelModel: ByteLevelModel,
-): LanguageModel<number[], number> {
+): LanguageModel<readonly number[], number> {
   return async (
-    prefix: number[],
+    prefix: readonly number[],
     rangeStart: number,
     rangeEnd: number,
     minSize: number,
