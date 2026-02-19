@@ -5,7 +5,7 @@ their probabilities) and a unit square. The strings are organized by length from
 top to bottom. The intent is for users to be able to input strings by "gliding" rightward into the language model,
 choosing the sentence's content by going up or downward, and correcting mistakes by going leftward.
 
-Currently implement as a Vite TypeScript frontend-only project. The language model is a character Markov trigram model (`model.bin`), planned to be swapped for a proper LLM later.
+Currently implement as a Vite TypeScript frontend-only project.
 
 There are basically two hard things that the front-end does:
 
@@ -62,7 +62,7 @@ Each returned `TokenProb` has a `start` and `end` on the cumulative probability 
 
 Two implementations exist:
 
-- `adaptModel` (types.ts) — wraps a simple `prefix → {token, probability}[]` function, computing cumulative extents and applying filters. Used by the trigram model.
+- `adaptModel` (types.ts) — wraps a simple `prefix → {token, probability}[]` function, computing cumulative extents and applying filters. Currently used only in tests.
 - `fromByteLevelModel` (models.ts) — adapts a byte-level UTF-8 model into a codepoint-level model, using exact rational arithmetic for cumulative positions and recursive expansion of multi-byte sequences. This is the main production implementation.
 
 **Performance note:** the type is generic, but the main use at this time is representing a Unicode codepoint model via `fromByteLevelModel`. A query with `minSize=0`, full range, and no `specificToken` materializes the entire distribution over all Unicode codepoints present in the model — expanding every multi-byte group one byte-level query at a time. Hence, _every LanguageModel call must have a nonzero minSize or specificToken_ set.
@@ -74,6 +74,6 @@ Two implementations exist:
 - `src/cursor.ts` — cursor type, normalization (ascent/descent)
 - `src/scene.ts` — `buildScene`: computes the content of the visible window
 - `src/render.ts` — `renderScene`: renders said content with a canvas renderer
-- `src/trigram.ts` — trigram model loader (reads `model.bin`)
 - `src/main.ts` — wires things together, displays widget, mouse-driven animation loop
-- `src/models.ts` - general language model support
+- `src/models.ts` — upconversion from byte-level model to Unicode codepoint LanguageModel
+- `src/backend.ts` — backend interface, request batching and caching 
