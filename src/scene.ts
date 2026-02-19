@@ -53,7 +53,7 @@ async function ascendToSceneRoot<T>(
   const mutablePrefix = [...prefix];
   let winTop: Rat = fromFloat(winTopFloat);
   let winBot: Rat = fromFloat(winBotFloat);
-  /*
+
   // If the window already fits at the starting level, no ascent needed.
   if (mutablePrefix.length > 0 && gte(winTop, ZERO) && gte(ONE, winBot)) {
     return {
@@ -62,7 +62,7 @@ async function ascendToSceneRoot<T>(
       winBot: toFloat(winBot),
     };
   }
-*/
+
   while (mutablePrefix.length > 0) {
     const lastToken = mutablePrefix.pop()!;
     const tokenResult = await first(model(mutablePrefix, 0, 1, 0, lastToken));

@@ -20,7 +20,21 @@ const SPEED = 2;
 const MAX_DT = 0.05;
 
 async function main() {
-  const model = fromByteLevelModel(predictBytes);
+  const hashParams = new URLSearchParams(window.location.hash.slice(1));
+  const modelCallPrefix = hashParams.get("modelCallPrefix") ?? "";
+  const prefixBytes = new TextEncoder().encode(modelCallPrefix);
+
+  const byteLevelModel =
+    prefixBytes.length > 0
+      ? (prefix: Uint8Array) => {
+          const full = new Uint8Array(prefixBytes.length + prefix.length);
+          full.set(prefixBytes);
+          full.set(prefix, prefixBytes.length);
+          return predictBytes(full);
+        }
+      : predictBytes;
+
+  const model = fromByteLevelModel(byteLevelModel);
   const display: TokenDisplay<number> = {
     label(cp) {
       if (cp === 32) return "\u25A1"; // □
