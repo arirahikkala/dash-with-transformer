@@ -12,21 +12,12 @@ const PREDICT_URL = "http://127.0.0.1:8000/predict";
 
 interface TrieNode {
   children: Map<number, TrieNode>;
-  /** Cached 256-element probability distribution. */
-  dist?: number[];
+  /** Cached or in-flight probability distribution (256 elements). */
+  dist?: Promise<number[]>;
 }
 
-function trieLookup(root: TrieNode, prefix: Uint8Array): number[] | undefined {
-  let node = root;
-  for (const byte of prefix) {
-    const child = node.children.get(byte);
-    if (!child) return undefined;
-    node = child;
-  }
-  return node.dist;
-}
-
-function trieInsert(root: TrieNode, prefix: Uint8Array, dist: number[]): void {
+/** Walk (or create) the trie path for `prefix` and return the leaf node. */
+function trieEnsure(root: TrieNode, prefix: Uint8Array): TrieNode {
   let node = root;
   for (const byte of prefix) {
     let child = node.children.get(byte);
@@ -36,7 +27,7 @@ function trieInsert(root: TrieNode, prefix: Uint8Array, dist: number[]): void {
     }
     node = child;
   }
-  node.dist = dist;
+  return node;
 }
 
 // ---------------------------------------------------------------------------
@@ -45,6 +36,7 @@ function trieInsert(root: TrieNode, prefix: Uint8Array, dist: number[]): void {
 
 interface PendingRequest {
   prefix: Uint8Array;
+  node: TrieNode;
   resolve: (dist: number[]) => void;
   reject: (err: Error) => void;
 }
@@ -78,12 +70,14 @@ async function flush(): Promise<void> {
       predictions: number[][];
     };
     for (let i = 0; i < batch.length; i++) {
-      trieInsert(cache, batch[i].prefix, predictions[i]);
       batch[i].resolve(predictions[i]);
     }
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));
-    for (const req of batch) req.reject(error);
+    for (const req of batch) {
+      req.node.dist = undefined; // clear so the prefix can be retried
+      req.reject(error);
+    }
   }
 }
 
@@ -91,19 +85,22 @@ async function flush(): Promise<void> {
  * Predict the next-byte distribution for a given byte prefix.
  * Returns a 256-element probability array.
  *
- * Results are cached in a trie. Cache misses are batched: all
- * requests enqueued within the same microtask checkpoint are sent
- * in a single HTTP request.
+ * Results are cached in a trie. In-flight requests are also tracked
+ * in the trie, so duplicate requests for the same prefix share a
+ * single promise. Cache misses are batched: all requests enqueued
+ * within the same microtask checkpoint are sent in a single HTTP
+ * request.
  */
 export function predictBytes(prefix: Uint8Array): Promise<number[]> {
-  const hit = trieLookup(cache, prefix);
-  if (hit) return Promise.resolve(hit);
-
-  return new Promise<number[]>((resolve, reject) => {
-    pending.push({ prefix, resolve, reject });
+  const node = trieEnsure(cache, prefix);
+  if (node.dist) return node.dist;
+  const promise = new Promise<number[]>((resolve, reject) => {
+    pending.push({ prefix, node, resolve, reject });
     if (!flushScheduled) {
       flushScheduled = true;
       queueMicrotask(flush);
     }
   });
+  node.dist = promise;
+  return promise;
 }
