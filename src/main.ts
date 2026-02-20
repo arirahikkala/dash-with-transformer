@@ -138,7 +138,11 @@ async function main() {
 
     if (version !== normalizeVersion) return;
     cursor = newCursor;
-    prefixEl.textContent = display.prefixToString(cursor.prefix);
+    const text = display.prefixToString(cursor.prefix);
+    if (prefixEl.textContent !== text) {
+      prefixEl.textContent = text;
+      prefixEl.scrollTop = prefixEl.scrollHeight;
+    }
 
     renderController?.abort();
     renderController = new AbortController();
