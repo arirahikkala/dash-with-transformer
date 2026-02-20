@@ -4,7 +4,7 @@
  * - Automatic request batching via microtask scheduling
  */
 
-const PREDICT_URL = "http://127.0.0.1:8000/predict";
+const PREDICT_URL = "https://ari-rahikkala.net/predict";
 
 // ---------------------------------------------------------------------------
 // Trie cache
