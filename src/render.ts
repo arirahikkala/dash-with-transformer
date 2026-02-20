@@ -10,59 +10,87 @@ export interface RenderOptions<T> {
 
 /** Render nodes as right-aligned squares, parent first then children on top. */
 async function renderNodes<T>(
-  ctx: CanvasRenderingContext2D,
+  nodeCtx: CanvasRenderingContext2D,
+  labelCtx: CanvasRenderingContext2D,
   nodes: AsyncIterable<SceneNode<T>>,
-  width: number,
+  nodeWidth: number,
   height: number,
   opts: RenderOptions<T>,
   signal: AbortSignal,
+  labelMinX: number,
 ): Promise<void> {
   for await (const node of nodes) {
     if (signal.aborted) return;
     const py0 = node.y0 * height;
     const py1 = node.y1 * height;
     const side = py1 - py0;
-    const x0 = width - side;
+    const x0 = nodeWidth - side;
 
-    // Colored square, right-aligned
-    ctx.fillStyle = opts.color(node.token);
-    ctx.fillRect(x0, py0, side, side);
+    // Colored square, right-aligned (node canvas)
+    nodeCtx.fillStyle = opts.color(node.token);
+    nodeCtx.fillRect(x0, py0, side, side);
 
-    // Subtle border at the top
-    ctx.strokeStyle = "rgba(255,255,255,0.1)";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(x0, py0);
-    ctx.lineTo(width, py0);
-    ctx.stroke();
+    // Subtle border at the top (node canvas)
+    nodeCtx.strokeStyle = "rgba(255,255,255,0.1)";
+    nodeCtx.lineWidth = 1;
+    nodeCtx.beginPath();
+    nodeCtx.moveTo(x0, py0);
+    nodeCtx.lineTo(nodeWidth, py0);
+    nodeCtx.stroke();
 
-    // Label near the left edge of the square
+    // Label on label canvas, pushed right past parent's label
+    let childLabelMinX = labelMinX;
     if (side >= 10) {
       const fontSize = Math.min(Math.max(side * 0.7, 10), 28);
-      ctx.font = `${fontSize}px monospace`;
-      ctx.fillStyle = "#e0e0e0";
-      ctx.textBaseline = "middle";
-      ctx.textAlign = "left";
-      ctx.fillText(opts.label(node.token), x0 + 4, py0 + side / 2);
+      labelCtx.font = `${fontSize}px monospace`;
+      labelCtx.fillStyle = "#e0e0e0";
+      labelCtx.textBaseline = "middle";
+      labelCtx.textAlign = "left";
+      const labelText = opts.label(node.token);
+      const labelX = Math.max(x0 + 4, labelMinX);
+      labelCtx.fillText(labelText, labelX, py0 + side / 2);
+      childLabelMinX = labelX + labelCtx.measureText(labelText).width + 1;
     }
 
     // Children paint on top (smaller squares nested inside)
-    renderNodes(ctx, node.children, width, height, opts, signal);
+    renderNodes(
+      nodeCtx,
+      labelCtx,
+      node.children,
+      nodeWidth,
+      height,
+      opts,
+      signal,
+      childLabelMinX,
+    );
   }
 }
 
-/** Render a Scene onto a 2D canvas. */
+/** Render a Scene onto dual canvases (nodes + labels). */
 export async function renderScene<T>(
-  ctx: CanvasRenderingContext2D,
+  nodeCtx: CanvasRenderingContext2D,
+  labelCtx: CanvasRenderingContext2D,
   scene: Scene<T>,
-  width: number,
+  nodeWidth: number,
   height: number,
   opts: RenderOptions<T>,
   signal: AbortSignal,
 ): Promise<void> {
-  // Dark background — gaps and out-of-bounds areas show through as dark space.
-  ctx.fillStyle = "#1a1a2e";
-  ctx.fillRect(0, 0, width, height);
+  // Dark background on node canvas
+  nodeCtx.fillStyle = "#1a1a2e";
+  nodeCtx.fillRect(0, 0, nodeWidth, height);
 
-  await renderNodes(ctx, scene.children, width, height, opts, signal);
+  // Clear label canvas to transparent
+  labelCtx.clearRect(0, 0, labelCtx.canvas.width, height);
+
+  await renderNodes(
+    nodeCtx,
+    labelCtx,
+    scene.children,
+    nodeWidth,
+    height,
+    opts,
+    signal,
+    0,
+  );
 }

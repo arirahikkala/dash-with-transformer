@@ -35,10 +35,17 @@
       }
       #dasher-container {
         position: relative;
+        overflow: visible;
       }
-      #dasher-canvas {
+      #node-canvas {
         border: 1px solid #0f3460;
         display: block;
+      }
+      #label-canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        pointer-events: none;
       }
       #crosshair {
         position: absolute;
@@ -72,11 +79,12 @@
     <div id="prefix-display"></div>
     <div id="dasher-container">
       <canvas
-        id="dasher-canvas"
+        id="node-canvas"
         width="600"
         height="600"
         draggable="false"
       ></canvas>
+      <canvas id="label-canvas" width="700" height="600"></canvas>
       <div id="crosshair">
         <div class="crosshair-v"></div>
         <div class="crosshair-h"></div>

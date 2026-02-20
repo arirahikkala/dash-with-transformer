@@ -49,8 +49,14 @@ async function main() {
   };
 
   const prefixEl = document.getElementById("prefix-display")!;
-  const canvas = document.getElementById("dasher-canvas") as HTMLCanvasElement;
-  const ctx = canvas.getContext("2d")!;
+  const nodeCanvas = document.getElementById(
+    "node-canvas",
+  ) as HTMLCanvasElement;
+  const labelCanvas = document.getElementById(
+    "label-canvas",
+  ) as HTMLCanvasElement;
+  const nodeCtx = nodeCanvas.getContext("2d")!;
+  const labelCtx = labelCanvas.getContext("2d")!;
 
   // --- Cursor state ---
   let cursor: Cursor<number> = { prefix: [], x: 0.5, y: 0.5 };
@@ -61,18 +67,18 @@ async function main() {
   let mouseY = 0;
 
   function updateMousePos(e: MouseEvent) {
-    const rect = canvas.getBoundingClientRect();
+    const rect = nodeCanvas.getBoundingClientRect();
     // Scale from CSS coords to canvas backing-store coords
-    mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
-    mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+    mouseX = (e.clientX - rect.left) * (nodeCanvas.width / rect.width);
+    mouseY = (e.clientY - rect.top) * (nodeCanvas.height / rect.height);
   }
 
-  canvas.addEventListener("mousedown", (e) => {
+  nodeCanvas.addEventListener("mousedown", (e) => {
     mouseDown = true;
     updateMousePos(e);
   });
 
-  canvas.addEventListener("mousemove", (e) => {
+  nodeCanvas.addEventListener("mousemove", (e) => {
     updateMousePos(e);
   });
 
@@ -86,7 +92,15 @@ async function main() {
   async function render(signal: AbortSignal) {
     const scene = await buildScene(model, cursor, 0.005);
     if (signal.aborted) return;
-    await renderScene(ctx, scene, canvas.width, canvas.height, display, signal);
+    await renderScene(
+      nodeCtx,
+      labelCtx,
+      scene,
+      nodeCanvas.width,
+      nodeCanvas.height,
+      display,
+      signal,
+    );
   }
 
   // --- Monotonic normalizeCursor ---
@@ -118,8 +132,8 @@ async function main() {
     lastTime = now;
 
     if (mouseDown) {
-      const w = canvas.width;
-      const h = canvas.height;
+      const w = nodeCanvas.width;
+      const h = nodeCanvas.height;
 
       // Normalized displacement from center: [-1, 1] on each axis
       const ndx = (mouseX - w / 2) / (w / 2);
