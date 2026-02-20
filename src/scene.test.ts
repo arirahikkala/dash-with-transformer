@@ -194,18 +194,26 @@ describe("buildScene", () => {
 
     it("zoomed in: cursor centered means crosshairs at 0.5", async () => {
       // With prefix=["A"], x=0.5, y=0.5 → halfHeight=0.5
-      // Window in A's frame: [0, 1] — fits in [0,1], so scenePrefix=["A"].
-      // Scale=1, offset=0.  Children of ["A"]: A at [0, 0.5], B at [0.5, 1].
+      // Window in A's frame: [0, 1] — fits, so ascend one more to scenePrefix=[].
+      // In root frame: A covers [0, 0.5], window maps to [0, 0.5].
+      // scale=2, offset=0 → top-level A spans [0, 1] in window coords.
+      // A's children: AA at [0, 0.5], AB at [0.5, 1].
       const cursor: Cursor<string> = { prefix: ["A"], x: 0.5, y: 0.5 };
       const scene = await buildScene(binary, cursor, 0.001);
       const nodes = await collect(scene.children);
-      expect(nodes.length).toBe(2);
+      // A covers entire window, B is off-screen at [1, 2]
       expect(nodes[0].token).toBe("A");
       expect(nodes[0].y0).toBeCloseTo(0);
-      expect(nodes[0].y1).toBeCloseTo(0.5);
-      expect(nodes[1].token).toBe("B");
-      expect(nodes[1].y0).toBeCloseTo(0.5);
-      expect(nodes[1].y1).toBeCloseTo(1);
+      expect(nodes[0].y1).toBeCloseTo(1);
+      // The original [0, 0.5] / [0.5, 1] split is now one level deeper
+      const inner = await collect(nodes[0].children);
+      expect(inner.length).toBe(2);
+      expect(inner[0].token).toBe("A");
+      expect(inner[0].y0).toBeCloseTo(0);
+      expect(inner[0].y1).toBeCloseTo(0.5);
+      expect(inner[1].token).toBe("B");
+      expect(inner[1].y0).toBeCloseTo(0.5);
+      expect(inner[1].y1).toBeCloseTo(1);
     });
   });
 
@@ -382,34 +390,42 @@ describe("buildScene", () => {
       }
     });
 
-    it("zoomed in deep: window inside single child needs no ascent", async () => {
+    it("zoomed in deep: window inside single child ascends one level", async () => {
       // prefix at depth 5, cursor.x near 1, y centered inside child A
-      // Window [0.15, 0.35] fits inside A [0, 0.5] — no ascent needed.
-      // Only A is visible at the top level (B is off-screen).
+      // Window [0.15, 0.35] fits inside [0, 0.5] — ascend one extra level
+      // to depth 4 so the covering node is a rendered child.
+      // Only A is visible at each level until the window straddles A/B.
       const prefix = Array<string>(5).fill("A");
       const cursor: Cursor<string> = { prefix, x: 0.9, y: 0.25 };
       const scene = await buildScene(binary, cursor, 0.01);
       const children = await collect(scene.children);
       expect(children.length).toBe(1);
       expect(children[0].token).toBe("A");
-      // A's children (at prefix depth 6) are both visible
+      // One more level of single-A before the A/B split
       const inner = await collect(children[0].children);
-      expect(inner.length).toBe(2);
+      expect(inner.length).toBe(1);
       expect(inner[0].token).toBe("A");
-      expect(inner[1].token).toBe("B");
+      // Now both A and B are visible
+      const deep = await collect(inner[0].children);
+      expect(deep.length).toBe(2);
+      expect(deep[0].token).toBe("A");
+      expect(deep[1].token).toBe("B");
     });
 
-    it("zoomed in deep: window straddling children stays at same level", async () => {
+    it("zoomed in deep: window straddling children ascends one level", async () => {
       // prefix at depth 5, y=0.5 straddles the A/B boundary
-      // Window [0.4, 0.6] fits in [0,1], so scenePrefix stays at depth 5.
-      // Both A and B are visible at the top level.
+      // Window [0.4, 0.6] fits in [0,1], so ascend one extra to depth 4.
+      // Top-level: only A visible. A's children: both A and B visible.
       const prefix = Array<string>(5).fill("A");
       const cursor: Cursor<string> = { prefix, x: 0.9, y: 0.5 };
       const scene = await buildScene(binary, cursor, 0.01);
       const children = await collect(scene.children);
-      expect(children.length).toBe(2);
+      expect(children.length).toBe(1);
       expect(children[0].token).toBe("A");
-      expect(children[1].token).toBe("B");
+      const inner = await collect(children[0].children);
+      expect(inner.length).toBe(2);
+      expect(inner[0].token).toBe("A");
+      expect(inner[1].token).toBe("B");
     });
   });
 });

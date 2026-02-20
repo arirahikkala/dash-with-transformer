@@ -67,6 +67,10 @@ Two implementations exist:
 
 **Performance note:** the type is generic, but the main use at this time is representing a Unicode codepoint model via `fromByteLevelModel`. A query with `minSize=0`, full range, and no `specificToken` materializes the entire distribution over all Unicode codepoints present in the model — expanding every multi-byte group one byte-level query at a time. Hence, _every LanguageModel call must have a nonzero minSize or specificToken_ set.
 
+## Testing
+
+Run `npm test` (or `npx vitest run`) to execute the test suite. Tests use Vitest and live alongside source files as `*.test.ts`.
+
 ## Architecture
 
 - `src/types.ts` - central types

@@ -36,9 +36,10 @@ interface AscendResult<T> {
 
 /**
  * Walk up from the cursor prefix, transforming window bounds into each
- * parent's frame using exact rational arithmetic, until the window
- * [winTop, winBot] fits within [0, 1] (i.e. the scene root's square
- * contains the entire view).
+ * parent's frame using exact rational arithmetic, until one level past
+ * where the window [winTop, winBot] first fits within [0, 1]. This
+ * ensures the node that fully covers the view is a child of the scene
+ * root (and thus gets rendered), rather than being the scene root itself.
  *
  * Each ascent step uses a specificToken lookup for the child we came
  * from — since we ascend from a normalized cursor, the cursor is always
@@ -53,15 +54,7 @@ async function ascendToSceneRoot<T>(
   const mutablePrefix = [...prefix];
   let winTop: Rat = fromFloat(winTopFloat);
   let winBot: Rat = fromFloat(winBotFloat);
-
-  // If the window already fits at the starting level, no ascent needed.
-  if (mutablePrefix.length > 0 && gte(winTop, ZERO) && gte(ONE, winBot)) {
-    return {
-      scenePrefix: mutablePrefix,
-      winTop: toFloat(winTop),
-      winBot: toFloat(winBot),
-    };
-  }
+  let fitted = gte(winTop, ZERO) && gte(ONE, winBot);
 
   while (mutablePrefix.length > 0) {
     const lastToken = mutablePrefix.pop()!;
@@ -80,8 +73,13 @@ async function ascendToSceneRoot<T>(
     winTop = add(cumBefore, mul(winTop, prob));
     winBot = add(cumBefore, mul(winBot, prob));
 
-    if (gte(winTop, ZERO) && gte(ONE, winBot)) {
+    // Go one level past the first fit so the node covering the entire
+    // view becomes a *child* of the scene root and actually gets rendered.
+    if (fitted) {
       break;
+    }
+    if (gte(winTop, ZERO) && gte(ONE, winBot)) {
+      fitted = true;
     }
   }
 
