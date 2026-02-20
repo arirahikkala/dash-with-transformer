@@ -31,7 +31,7 @@ async function renderNodes<T>(
     nodeCtx.fillRect(x0, py0, side, side);
 
     // Subtle border at the top (node canvas)
-    nodeCtx.strokeStyle = "rgba(255,255,255,0.1)";
+    nodeCtx.strokeStyle = "rgba(0,0,0,0.1)";
     nodeCtx.lineWidth = 1;
     nodeCtx.beginPath();
     nodeCtx.moveTo(x0, py0);
@@ -43,7 +43,7 @@ async function renderNodes<T>(
     if (side >= 10) {
       const fontSize = Math.min(Math.max(side * 0.7, 10), 28);
       labelCtx.font = `${fontSize}px monospace`;
-      labelCtx.fillStyle = "#e0e0e0";
+      labelCtx.fillStyle = "#000";
       labelCtx.textBaseline = "middle";
       labelCtx.textAlign = "left";
       const labelText = opts.label(node.token);
@@ -76,8 +76,8 @@ export async function renderScene<T>(
   opts: RenderOptions<T>,
   signal: AbortSignal,
 ): Promise<void> {
-  // Dark background on node canvas
-  nodeCtx.fillStyle = "#1a1a2e";
+  // Light background on node canvas
+  nodeCtx.fillStyle = "#e8e8e8";
   nodeCtx.fillRect(0, 0, nodeWidth, height);
 
   // Clear label canvas to transparent
