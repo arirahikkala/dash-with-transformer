@@ -84,12 +84,6 @@ async function flush(): Promise<void> {
 /**
  * Predict the next-byte distribution for a given byte prefix.
  * Returns a 256-element probability array.
- *
- * Results are cached in a trie. In-flight requests are also tracked
- * in the trie, so duplicate requests for the same prefix share a
- * single promise. Cache misses are batched: all requests enqueued
- * within the same microtask checkpoint are sent in a single HTTP
- * request.
  */
 export function predictBytes(prefix: Uint8Array): Promise<number[]> {
   const node = trieEnsure(cache, prefix);
@@ -98,7 +92,7 @@ export function predictBytes(prefix: Uint8Array): Promise<number[]> {
     pending.push({ prefix, node, resolve, reject });
     if (!flushScheduled) {
       flushScheduled = true;
-      queueMicrotask(flush);
+      setTimeout(flush, 100);
     }
   });
   node.dist = promise;
