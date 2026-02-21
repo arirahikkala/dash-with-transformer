@@ -5,7 +5,7 @@ their probabilities) and a unit square. The strings are organized by length from
 top to bottom. The intent is for users to be able to input strings by "gliding" rightward into the language model,
 choosing the sentence's content by going up or downward, and correcting mistakes by going leftward.
 
-Currently implement as a Vite TypeScript frontend-only project.
+The repo is split into `frontend/` (Vite + TypeScript) and `backend/` (Python + FastAPI).
 
 There are basically two hard things that the front-end does:
 
@@ -38,7 +38,7 @@ Conceptually, a cursor just points at an exact (x, y) position in the unit squar
 
 In the actual implementation, it's a triplet (prefix, x, y), where x and y are in the current square's frame: x = 0 is the left edge, y = 0 is the top edge.
 
-normalizeCursor in cursor.ts implements smooth navigation through different prefixes by returning a cursor at the same global position, whose prefix is the smallest square that contains the cursor. Note that this requires exact rational arithmetic (via `rational.ts`) and a recursive ascent/descent search. But what it allows is that smooth movement in the widget can be animated by simply updating (x, y) and then calling normalizeCursor.
+`normalizeCursor` in `cursor.ts` implements smooth navigation through different prefixes by returning a cursor at the same global position, whose prefix is the smallest square that contains the cursor. Note that this requires exact rational arithmetic (via `rational.ts`) and a recursive ascent/descent search. But what it allows is that smooth movement in the widget can be animated by simply updating (x, y) and then calling normalizeCursor.
 
 The cursor's position outside of these calculations is kept in machine floats, so memory leaks from overly precise calculation results sticking around aren't a concern.
 
@@ -67,17 +67,34 @@ Two implementations exist:
 
 **Performance note:** the type is generic, but the main use at this time is representing a Unicode codepoint model via `fromByteLevelModel`. A query with `minSize=0`, full range, and no `specificToken` materializes the entire distribution over all Unicode codepoints present in the model — expanding every multi-byte group one byte-level query at a time. Hence, _every LanguageModel call must have a nonzero minSize or specificToken_ set.
 
+## Backend
+
+A Python FastAPI server (`backend/`) that wraps a byte-level language model via `genlm-bytes`.
+
 ## Testing
 
-Run `npm test` (or `npx vitest run`) to execute the test suite. Tests use Vitest and live alongside source files as `*.test.ts`.
+Run `npm test` (or `npx vitest run`) in `frontend/` to execute the test suite. Tests use Vitest and live alongside source files as `*.test.ts`.
 
 ## Architecture
 
-- `src/types.ts` - central types
-- `src/rational.ts` — exact BigInt rational arithmetic
-- `src/cursor.ts` — cursor type, normalization (ascent/descent)
-- `src/scene.ts` — `buildScene`: computes the content of the visible window
-- `src/render.ts` — `renderScene`: renders said content with a canvas renderer
-- `src/main.ts` — wires things together, displays widget, mouse-driven animation loop
-- `src/models.ts` — upconversion from byte-level model to Unicode codepoint LanguageModel
-- `src/backend.ts` — backend interface, request batching and caching
+### Frontend (`frontend/src/`)
+
+- `types.ts` — central types
+- `rational.ts` — exact BigInt rational arithmetic
+- `cursor.ts` — cursor type, normalization (ascent/descent)
+- `scene.ts` — `buildScene`: computes the content of the visible window
+- `render.ts` — `renderScene`: renders said content with a canvas renderer
+- `main.ts` — wires things together, displays widget, mouse-driven animation loop
+- `models.ts` — upconversion from byte-level model to Unicode codepoint LanguageModel
+- `backend.ts` — `predictBytes`: backend client, request batching and trie cache
+
+### Backend (`backend/llm_dasher/`)
+
+- `server.py` — FastAPI app, single `/predict` endpoint
+- `engine.py` — `BytePredictionEngine`: beam-search inference, LRU state cache, trie expansion
+
+### Overall
+
+Hence the overall architecture is basically a straight pull pipeline:
+
+renderScene <- buildScene <- fromByteLevelModel <- predictBytes <- (HTTP req) <- predict_batch
