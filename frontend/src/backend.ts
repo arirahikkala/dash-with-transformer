@@ -131,7 +131,15 @@ export function predictBytes(
   const node = trieEnsure(cache, prefix);
   if (node.dist) return node.dist;
   const promise = new Promise<number[]>((resolve, reject) => {
-    pending.push({ prefix, rangeStart, rangeEnd, minSize, node, resolve, reject });
+    pending.push({
+      prefix,
+      rangeStart,
+      rangeEnd,
+      minSize,
+      node,
+      resolve,
+      reject,
+    });
     if (!flushScheduled) {
       flushScheduled = true;
       setTimeout(flush, 100);

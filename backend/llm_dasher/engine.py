@@ -52,10 +52,11 @@ class BytePredictionEngine:
             return
         self._cache[key] = state
         while len(self._cache) > CACHE_MAX_SIZE:
-            key, _ = self._cache.popitem(last=False)
-            if key == b"":
-                # Never evict the empty-prefix sentinel; re-insert and stop.
-                self._cache.move_to_end(key, last=False)
+            evicted_key, evicted_val = self._cache.popitem(last=False)
+            if evicted_key == b"":
+                # Never evict the empty-prefix sentinel; re-insert at front and stop.
+                self._cache[evicted_key] = evicted_val
+                self._cache.move_to_end(evicted_key, last=False)
                 break
 
     async def _predict_one(self, ctx: bytes) -> list[float]:
@@ -85,14 +86,18 @@ class BytePredictionEngine:
         range_start: float,
         range_end: float,
         min_size: float,
+        depth: int = 0,
     ) -> dict:
         """Recursively build a trie of next-byte distributions.
 
         Only expands children whose cumulative extent overlaps
         [range_start, range_end] and whose probability >= min_size.
+        Stops recursing beyond *depth* 5.
         """
         dist = await self._predict_one(prefix)
         children: dict[int, dict] = {}
+        if depth >= 5:
+            return {"dist": dist, "children": children}
         cum = cum_start
         for b in range(256):
             if dist[b] == 0:
@@ -111,6 +116,7 @@ class BytePredictionEngine:
                 range_start,
                 range_end,
                 min_size,
+                depth + 1,
             )
         return {"dist": dist, "children": children}
 
