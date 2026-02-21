@@ -48,7 +48,19 @@ async function renderNodes<T>(
       labelCtx.textAlign = "left";
       const labelText = opts.label(node.token);
       const labelX = Math.max(x0 + 4, labelMinX);
-      labelCtx.fillText(labelText, labelX, py0 + side / 2);
+      const pad = 4;
+      const halfFont = fontSize / 2;
+      const centerY = py0 + side / 2;
+      // Clamp to screen, then clamp to node (node bounds always win)
+      const screenClamped = Math.max(
+        pad + halfFont,
+        Math.min(height - pad - halfFont, centerY),
+      );
+      const labelY = Math.max(
+        py0 + halfFont + pad,
+        Math.min(py1 - halfFont - pad, screenClamped),
+      );
+      labelCtx.fillText(labelText, labelX, labelY);
       childLabelMinX = labelX + labelCtx.measureText(labelText).width + 1;
     }
 
