@@ -51,12 +51,12 @@ async function main() {
       if (cp === 32) return "#ffffff";
       // Lowercase a-z: hue cycle between light green (120) and cyan (180)
       if (cp >= 97 && cp <= 122) {
-        const hue = (((cp - 97) * 137.508) % 60) + 120;
+        const hue = (((cp - 97) * 137508) % 60) + 120;
         return `hsl(${hue}, 40%, 85%)`;
       }
       // Uppercase A-Z: same cycle, slightly darker
       if (cp >= 65 && cp <= 90) {
-        const hue = (((cp - 65) * 137.508) % 60) + 120;
+        const hue = (((cp - 65) * 137508) % 60) + 120;
         return `hsl(${hue}, 40%, 75%)`;
       }
       // Punctuation: dark green
