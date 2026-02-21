@@ -16,12 +16,15 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+class PredictInput(BaseModel):
+    prefix: str  # base64-encoded byte buffer
+    range_start: float = 0.0
+    range_end: float = 1.0
+    min_size: float = 0.0
+
+
 class PredictRequest(BaseModel):
-    inputs: list[str]  # base64-encoded byte buffers
-
-
-class PredictResponse(BaseModel):
-    predictions: list[list[float]]
+    inputs: list[PredictInput]
 
 
 engine = BytePredictionEngine()
@@ -38,14 +41,17 @@ app = FastAPI(lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
-@app.post("/predict", response_model=PredictResponse)
+@app.post("/predict")
 async def predict(req: PredictRequest):
-    raw_inputs = [base64.b64decode(b64) for b64 in req.inputs]
+    raw_inputs = [
+        (base64.b64decode(inp.prefix), inp.range_start, inp.range_end, inp.min_size)
+        for inp in req.inputs
+    ]
     t0 = time.perf_counter()
     predictions = await engine.predict_batch(raw_inputs)
     elapsed_ms = (time.perf_counter() - t0) * 1000
     logger.info("predict: %d inputs, %.1fms", len(raw_inputs), elapsed_ms)
-    return PredictResponse(predictions=predictions)
+    return {"predictions": predictions}
 
 
 def main():

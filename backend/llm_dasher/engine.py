@@ -77,20 +77,62 @@ class BytePredictionEngine:
         probs = np.exp(logp.ps[:256]).tolist()
         return probs
 
-    async def predict_batch(self, inputs: list[bytes]) -> list[list[float]]:
-        """Predict next-byte distributions for a batch of byte contexts.
+    async def _predict_trie(
+        self,
+        prefix: bytes,
+        prob_so_far: float,
+        cum_start: float,
+        range_start: float,
+        range_end: float,
+        min_size: float,
+    ) -> dict:
+        """Recursively build a trie of next-byte distributions.
 
-        Sorts inputs by content so shared prefixes populate the cache
+        Only expands children whose cumulative extent overlaps
+        [range_start, range_end] and whose probability >= min_size.
+        """
+        dist = await self._predict_one(prefix)
+        children: dict[int, dict] = {}
+        cum = cum_start
+        for b in range(256):
+            if dist[b] == 0:
+                continue
+            sub_prob = prob_so_far * dist[b]
+            sub_cum_start = cum
+            cum += sub_prob
+            if cum < range_start or sub_cum_start > range_end:
+                continue
+            if sub_prob < min_size:
+                continue
+            children[b] = await self._predict_trie(
+                prefix + bytes([b]),
+                sub_prob,
+                sub_cum_start,
+                range_start,
+                range_end,
+                min_size,
+            )
+        return {"dist": dist, "children": children}
+
+    async def predict_batch(
+        self, inputs: list[tuple[bytes, float, float, float]]
+    ) -> list[dict]:
+        """Predict next-byte distribution tries for a batch of inputs.
+
+        Each input is (prefix, range_start, range_end, min_size).
+        Sorts inputs by prefix so shared prefixes populate the cache
         consecutively, then unscrambles results back to original order.
         """
         if not inputs:
             return []
 
-        indexed = sorted(enumerate(inputs), key=lambda t: t[1])
-        results: list[tuple[int, list[float]]] = []
-        for orig_idx, ctx in indexed:
-            probs = await self._predict_one(ctx)
-            results.append((orig_idx, probs))
+        indexed = sorted(enumerate(inputs), key=lambda t: t[1][0])
+        results: list[tuple[int, dict]] = []
+        for orig_idx, (ctx, range_start, range_end, min_size) in indexed:
+            trie = await self._predict_trie(
+                ctx, 1.0, 0.0, range_start, range_end, min_size,
+            )
+            results.append((orig_idx, trie))
 
         results.sort(key=lambda t: t[0])
-        return [probs for _, probs in results]
+        return [trie for _, trie in results]

@@ -5,7 +5,12 @@ import { fromByteLevelModel } from "./models";
 // Test helpers
 // ---------------------------------------------------------------------------
 
-type ByteLevelModel = (bytePrefix: Uint8Array) => Promise<number[]>;
+type ByteLevelModel = (
+  bytePrefix: Uint8Array,
+  rangeStart: number,
+  rangeEnd: number,
+  minSize: number,
+) => Promise<number[]>;
 
 /** Collect all items from an async iterable into an array. */
 async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {
