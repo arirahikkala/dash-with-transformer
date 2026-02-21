@@ -45,7 +45,7 @@ export async function normalizeCursor<T>(
   state: Cursor<T>,
   options?: NormalizeOptions,
 ): Promise<Cursor<T>> {
-  const maxDepth = options?.maxDepth ?? 100;
+  const maxDepth = options?.maxDepth ?? 100000;
 
   const prefix: T[] = [...state.prefix];
   let x: Rat = fromFloat(state.x);
