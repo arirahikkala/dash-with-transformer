@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "llm-dasher"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "genlm-bytes",
+    "fastapi",
+    "uvicorn[standard]",
+]
+
+[project.scripts]
+llm-dasher = "llm_dasher.server:main"
