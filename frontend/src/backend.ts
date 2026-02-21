@@ -4,7 +4,9 @@
  * - Automatic request batching via microtask scheduling
  */
 
-const PREDICT_URL = "https://ari-rahikkala.net/predict";
+const hashParams = new URLSearchParams(window.location.hash.slice(1));
+const BASE_URL = hashParams.get("backendUrl") ?? "https://ari-rahikkala.net";
+const PREDICT_URL = `${BASE_URL}/predict`;
 
 // ---------------------------------------------------------------------------
 // Trie cache
