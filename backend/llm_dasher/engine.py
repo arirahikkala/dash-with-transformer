@@ -82,30 +82,33 @@ class BytePredictionEngine:
         self,
         prefix: bytes,
         prob_so_far: float,
-        min_size: float,
+        min_prob: float,
         depth: int = 0,
     ) -> dict:
         """Recursively build a trie of next-byte distributions.
 
-        Only expands children whose probability >= min_size.
+        Only expands children whose probability >= min_prob.
         Stops recursing beyond *depth* 5.
         """
         dist = await self._predict_one(prefix)
         children: dict[int, dict] = {}
         if depth >= 5:
             return {"dist": dist, "children": children}
-        for b in range(256):
-            if dist[b] == 0:
-                continue
-            sub_prob = prob_so_far * dist[b]
-            if sub_prob < min_size:
-                continue
-            children[b] = await self._predict_trie(
-                prefix + bytes([b]),
-                sub_prob,
-                min_size,
-                depth + 1,
-            )
+        eligible = [
+            b for b in range(256)
+            if dist[b] != 0 and prob_so_far * dist[b] >= min_prob
+        ]
+        if eligible:
+            subtries = await asyncio.gather(*(
+                self._predict_trie(
+                    prefix + bytes([b]),
+                    prob_so_far * dist[b],
+                    min_prob,
+                    depth + 1,
+                )
+                for b in eligible
+            ))
+            children = dict(zip(eligible, subtries))
         return {"dist": dist, "children": children}
 
     async def predict_batch(
@@ -113,18 +116,12 @@ class BytePredictionEngine:
     ) -> list[dict]:
         """Predict next-byte distribution tries for a batch of inputs.
 
-        Each input is (prefix, min_size).
-        Sorts inputs by prefix so shared prefixes populate the cache
-        consecutively, then unscrambles results back to original order.
+        Each input is (prefix, min_prob).
         """
         if not inputs:
             return []
 
-        indexed = sorted(enumerate(inputs), key=lambda t: t[1][0])
-        results: list[tuple[int, dict]] = []
-        for orig_idx, (ctx, min_size) in indexed:
-            trie = await self._predict_trie(ctx, 1.0, min_size)
-            results.append((orig_idx, trie))
-
-        results.sort(key=lambda t: t[0])
-        return [trie for _, trie in results]
+        return list(await asyncio.gather(*(
+            self._predict_trie(ctx, 1.0, min_prob)
+            for ctx, min_prob in inputs
+        )))

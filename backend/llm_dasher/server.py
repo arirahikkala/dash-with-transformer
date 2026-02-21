@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 class PredictInput(BaseModel):
     prefix: str  # base64-encoded byte buffer
-    min_size: float = 0.0
+    min_prob: float = 0.0
 
 
 class PredictRequest(BaseModel):
@@ -42,7 +42,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 @app.post("/predict")
 async def predict(req: PredictRequest):
     raw_inputs = [
-        (base64.b64decode(inp.prefix), inp.min_size)
+        (base64.b64decode(inp.prefix), inp.min_prob)
         for inp in req.inputs
     ]
     t0 = time.perf_counter()

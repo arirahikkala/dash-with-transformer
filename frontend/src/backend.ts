@@ -62,7 +62,7 @@ function populateTrieCache(prefix: Uint8Array, trie: TrieResponse): void {
 
 interface PendingRequest {
   prefix: Uint8Array;
-  minSize: number;
+  minProb: number;
   node: TrieNode;
   resolve: (dist: number[]) => void;
   reject: (err: Error) => void;
@@ -83,7 +83,7 @@ async function flush(): Promise<void> {
     for (const b of req.prefix) bin += String.fromCharCode(b);
     return {
       prefix: btoa(bin),
-      min_size: req.minSize,
+      min_prob: req.minProb,
     };
   });
 
@@ -129,7 +129,7 @@ export function predictBytes(
   const promise = new Promise<number[]>((resolve, reject) => {
     pending.push({
       prefix,
-      minSize,
+      minProb: minSize,
       node,
       resolve,
       reject,
