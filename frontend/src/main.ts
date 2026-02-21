@@ -26,16 +26,11 @@ async function main() {
 
   const byteLevelModel =
     prefixBytes.length > 0
-      ? (
-          prefix: Uint8Array,
-          rangeStart: number,
-          rangeEnd: number,
-          minSize: number,
-        ) => {
+      ? (prefix: Uint8Array, minSize: number) => {
           const full = new Uint8Array(prefixBytes.length + prefix.length);
           full.set(prefixBytes);
           full.set(prefix, prefixBytes.length);
-          return predictBytes(full, rangeStart, rangeEnd, minSize);
+          return predictBytes(full, minSize);
         }
       : predictBytes;
 

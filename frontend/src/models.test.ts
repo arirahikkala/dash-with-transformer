@@ -7,8 +7,6 @@ import { fromByteLevelModel } from "./models";
 
 type ByteLevelModel = (
   bytePrefix: Uint8Array,
-  rangeStart: number,
-  rangeEnd: number,
   minSize: number,
 ) => Promise<number[]>;
 

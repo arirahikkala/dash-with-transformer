@@ -60,8 +60,6 @@ function populateTrieCache(prefix: Uint8Array, trie: TrieResponse): void {
 
 interface PendingRequest {
   prefix: Uint8Array;
-  rangeStart: number;
-  rangeEnd: number;
   minSize: number;
   node: TrieNode;
   resolve: (dist: number[]) => void;
@@ -83,8 +81,6 @@ async function flush(): Promise<void> {
     for (const b of req.prefix) bin += String.fromCharCode(b);
     return {
       prefix: btoa(bin),
-      range_start: req.rangeStart,
-      range_end: req.rangeEnd,
       min_size: req.minSize,
     };
   });
@@ -120,12 +116,10 @@ async function flush(): Promise<void> {
  * Returns a 256-element probability array.
  *
  * The backend returns a trie of pre-expanded distributions based on
- * rangeStart/rangeEnd/minSize, populating the cache for child prefixes.
+ * minSize, populating the cache for child prefixes.
  */
 export function predictBytes(
   prefix: Uint8Array,
-  rangeStart: number,
-  rangeEnd: number,
   minSize: number,
 ): Promise<number[]> {
   const node = trieEnsure(cache, prefix);
@@ -133,8 +127,6 @@ export function predictBytes(
   const promise = new Promise<number[]>((resolve, reject) => {
     pending.push({
       prefix,
-      rangeStart,
-      rangeEnd,
       minSize,
       node,
       resolve,
@@ -142,7 +134,8 @@ export function predictBytes(
     });
     if (!flushScheduled) {
       flushScheduled = true;
-      setTimeout(flush, 100);
+      setTimeout(flush, 500);
+      //      queueMicrotask(flush);
     }
   });
   node.dist = promise;

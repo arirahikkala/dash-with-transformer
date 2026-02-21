@@ -50,8 +50,6 @@ function decodeUtf8Bytes(bytes: number[]): number {
 
 type ByteLevelModel = (
   bytePrefix: Uint8Array,
-  rangeStart: number,
-  rangeEnd: number,
   minSize: number,
 ) => Promise<number[]>;
 
@@ -87,7 +85,7 @@ async function expandMultiByte(
   }
 
   const queryPrefix = new Uint8Array([...bytePrefix, ...partialBytes]);
-  const dist = await model(queryPrefix, rangeStart, rangeEnd, minSize);
+  const dist = await model(queryPrefix, minSize);
 
   // Single pass: accumulate cumulative positions for ALL non-zero
   // continuation bytes (so later sub-groups are positioned correctly),
@@ -139,7 +137,7 @@ async function lookupSpecificToken(
   const targetBytes = [...codepointsToUtf8([codepoint])];
   const leadByte = targetBytes[0];
 
-  const firstByteDist = await model(bytePrefix, 0, 0, 2);
+  const firstByteDist = await model(bytePrefix, 2);
   if (firstByteDist[leadByte] === 0) return null;
 
   // Cumulative start for the lead byte.
@@ -157,7 +155,7 @@ async function lookupSpecificToken(
       ...bytePrefix,
       ...targetBytes.slice(0, i),
     ]);
-    const dist = await model(queryPrefix, 0, 0, 2);
+    const dist = await model(queryPrefix, 2);
     const targetByte = targetBytes[i];
 
     if (dist[targetByte] === 0) return null;
@@ -224,12 +222,7 @@ export function fromByteLevelModel(
     }
 
     // 1. First-byte distribution (1 model call).
-    const firstByteDist = await byteLevelModel(
-      bytePrefix,
-      rangeStart,
-      rangeEnd,
-      minSize,
-    );
+    const firstByteDist = await byteLevelModel(bytePrefix, minSize);
 
     // 2. Cumulative start position for every first-byte group.
     //    P(all codepoints starting with byte b) = P(b), so the
