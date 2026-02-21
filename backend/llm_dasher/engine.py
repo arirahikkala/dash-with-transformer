@@ -92,12 +92,13 @@ class BytePredictionEngine:
         """
         dist = await self._predict_one(prefix)
         children: dict[int, dict] = {}
-        if depth >= 5:
-            return {"dist": dist, "children": children}
         eligible = [
             b for b in range(256)
             if dist[b] != 0 and prob_so_far * dist[b] >= min_prob
         ]
+        # also break up the recursion if at any point it branches too eagerly
+        if depth >= 5 or len(eligible) >= 3:
+            return {"dist": dist, "children": children}
         if eligible:
             subtries = await asyncio.gather(*(
                 self._predict_trie(
