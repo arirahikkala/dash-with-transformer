@@ -5,7 +5,7 @@
  */
 
 const hashParams = new URLSearchParams(window.location.hash.slice(1));
-const BASE_URL = hashParams.get("backendUrl") ?? "https://ari-rahikkala.net";
+const BASE_URL = hashParams.get("backendUrl") ?? "http://localhost:8000";
 const PREDICT_URL = `${BASE_URL}/predict`;
 
 // ---------------------------------------------------------------------------
