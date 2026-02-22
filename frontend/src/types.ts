@@ -22,7 +22,7 @@ export interface TokenProb<T> {
  *
  * Returned entries must not overlap, must have no holes between
  * successive entries in the full distribution, and their extents must depend
- * only on the prefix.
+ * only on the prefix. Entries may be returned in any order.
  *
  * @param prefix        - The token prefix.
  * @param rangeStart    - Only return entries overlapping [rangeStart, rangeEnd].

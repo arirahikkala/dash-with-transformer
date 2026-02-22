@@ -45,6 +45,43 @@ function decodeUtf8Bytes(bytes: number[]): number {
 }
 
 // ---------------------------------------------------------------------------
+// Async iterable merge
+// ---------------------------------------------------------------------------
+
+/**
+ * Merge multiple async iterables, yielding values as soon as any source
+ * produces one.  Order across sources is non-deterministic (whichever
+ * source's `.next()` settles first wins).
+ */
+async function* mergeAsyncIterables<T>(
+  iterables: AsyncIterable<T>[],
+): AsyncGenerator<T> {
+  const iterators = iterables.map((iter) => iter[Symbol.asyncIterator]());
+  const active = new Map<
+    number,
+    Promise<{ result: IteratorResult<T>; index: number }>
+  >();
+  for (let i = 0; i < iterators.length; i++) {
+    active.set(
+      i,
+      iterators[i].next().then((result) => ({ result, index: i })),
+    );
+  }
+  while (active.size > 0) {
+    const { result, index } = await Promise.race(active.values());
+    if (result.done) {
+      active.delete(index);
+    } else {
+      yield result.value;
+      active.set(
+        index,
+        iterators[index].next().then((r) => ({ result: r, index })),
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Multi-byte expansion
 // ---------------------------------------------------------------------------
 
@@ -62,10 +99,10 @@ type ByteLevelModel = (
  * earlier ones are skipped), and only sub-groups that overlap the visible
  * range and meet the minimum-size threshold are recursed into.
  *
- * Returns entries in byte order (= codepoint order within a fixed lead byte).
+ * Yields entries as soon as they are ready, in no particular order.
  * All continuation queries at the same depth run in parallel.
  */
-async function expandMultiByte(
+async function* expandMultiByte(
   model: ByteLevelModel,
   bytePrefix: Uint8Array,
   partialBytes: number[],
@@ -75,13 +112,14 @@ async function expandMultiByte(
   rangeStart: number,
   rangeEnd: number,
   minSize: number,
-): Promise<TokenProb<number>[]> {
+): AsyncGenerator<TokenProb<number>> {
   if (partialBytes.length === totalBytes) {
     const start = cumStart;
     const end = cumStart + probSoFar;
-    if (end < rangeStart || start > rangeEnd) return [];
-    if (end - start < minSize) return [];
-    return [{ token: decodeUtf8Bytes(partialBytes), start, end }];
+    if (end < rangeStart || start > rangeEnd) return;
+    if (end - start < minSize) return;
+    yield { token: decodeUtf8Bytes(partialBytes), start, end };
+    return;
   }
 
   const queryPrefix = new Uint8Array([...bytePrefix, ...partialBytes]);
@@ -90,7 +128,7 @@ async function expandMultiByte(
   // Single pass: accumulate cumulative positions for ALL non-zero
   // continuation bytes (so later sub-groups are positioned correctly),
   // but only recurse into those that pass the range/size filters.
-  const tasks: Promise<TokenProb<number>[]>[] = [];
+  const subtrees: AsyncIterable<TokenProb<number>>[] = [];
   let cum = cumStart;
   for (let b = 0; b < 256; b++) {
     if (dist[b] === 0) continue;
@@ -101,7 +139,7 @@ async function expandMultiByte(
     if (cum < rangeStart || subCumStart > rangeEnd) continue;
     if (cum - subCumStart < minSize) continue;
 
-    tasks.push(
+    subtrees.push(
       expandMultiByte(
         model,
         bytePrefix,
@@ -116,8 +154,7 @@ async function expandMultiByte(
     );
   }
 
-  const results = await Promise.all(tasks);
-  return results.flat();
+  yield* mergeAsyncIterables(subtrees);
 }
 
 // ---------------------------------------------------------------------------
@@ -186,7 +223,7 @@ async function lookupSpecificToken(
  *   second-byte sub-groups that overlap the range and meet minSize.
  *
  * Calls are maximally parallel: all continuation queries at the same
- * depth run concurrently via Promise.all.
+ * depth run concurrently, yielding results as they arrive.
  *
  * Cumulative extents are deterministic (the loops accumulate over ALL
  * non-zero bytes in fixed order, regardless of the query window) so
@@ -240,14 +277,8 @@ export function fromByteLevelModel(
       yield { token: b, start, end };
     }
 
-    // 4. Multi-byte groups: decide which need expansion.
-    type GroupInfo = {
-      firstByte: number;
-      totalBytes: number;
-      prob: number;
-      cumStart: number;
-    };
-    const groupsToExpand: GroupInfo[] = [];
+    // 4. Multi-byte groups: expand in parallel, yield as each resolves.
+    const expansions: AsyncIterable<TokenProb<number>>[] = [];
 
     for (let b = 0xc0; b <= 0xff; b++) {
       if (firstByteDist[b] === 0) continue;
@@ -261,34 +292,21 @@ export function fromByteLevelModel(
       // Skip groups where every codepoint is below minSize.
       if (firstByteDist[b] < minSize) continue;
 
-      groupsToExpand.push({
-        firstByte: b,
-        totalBytes,
-        prob: firstByteDist[b],
-        cumStart: firstByteCumStart[b],
-      });
+      expansions.push(
+        expandMultiByte(
+          byteLevelModel,
+          bytePrefix,
+          [b],
+          totalBytes,
+          firstByteDist[b],
+          firstByteCumStart[b],
+          rangeStart,
+          rangeEnd,
+          minSize,
+        ),
+      );
     }
 
-    // 5. Expand all needed groups in parallel, yield in group order.
-    const expansionPromises = groupsToExpand.map((g) =>
-      expandMultiByte(
-        byteLevelModel,
-        bytePrefix,
-        [g.firstByte],
-        g.totalBytes,
-        g.prob,
-        g.cumStart,
-        rangeStart,
-        rangeEnd,
-        minSize,
-      ),
-    );
-
-    for (const promise of expansionPromises) {
-      const entries = await promise;
-      for (const entry of entries) {
-        yield entry;
-      }
-    }
+    yield* mergeAsyncIterables(expansions);
   };
 }
