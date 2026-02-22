@@ -135,27 +135,21 @@ async function lookupSpecificToken(
   codepoint: number,
 ): Promise<TokenProb<number> | null> {
   const targetBytes = [...codepointsToUtf8([codepoint])];
-  const leadByte = targetBytes[0];
 
-  const firstByteDist = await model(bytePrefix, 2);
-  if (firstByteDist[leadByte] === 0) return null;
+  // Fire all byte-level queries in parallel — the prefix for level i
+  // is bytePrefix + targetBytes[0..i), which is known upfront.
+  const dists = await Promise.all(
+    targetBytes.map((_, i) =>
+      model(new Uint8Array([...bytePrefix, ...targetBytes.slice(0, i)]), 2),
+    ),
+  );
 
-  // Cumulative start for the lead byte.
+  // Process sequentially to compute cumulative position.
   let cumStart = 0;
-  for (let b = 0; b < leadByte; b++) {
-    if (firstByteDist[b] > 0) {
-      cumStart += firstByteDist[b];
-    }
-  }
-  let probSoFar = firstByteDist[leadByte];
+  let probSoFar = 1;
 
-  // For multi-byte sequences, descend through continuation bytes.
-  for (let i = 1; i < targetBytes.length; i++) {
-    const queryPrefix = new Uint8Array([
-      ...bytePrefix,
-      ...targetBytes.slice(0, i),
-    ]);
-    const dist = await model(queryPrefix, 2);
+  for (let i = 0; i < targetBytes.length; i++) {
+    const dist = dists[i];
     const targetByte = targetBytes[i];
 
     if (dist[targetByte] === 0) return null;
