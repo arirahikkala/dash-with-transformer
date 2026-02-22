@@ -9,6 +9,15 @@ const BASE_URL = hashParams.get("backendUrl") ?? "http://localhost:8000";
 const PREDICT_URL = `${BASE_URL}/predict`;
 
 // ---------------------------------------------------------------------------
+// Request compression
+// ---------------------------------------------------------------------------
+
+async function gzipCompress(text: string): Promise<Blob> {
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));
+  return new Response(stream).blob();
+}
+
+// ---------------------------------------------------------------------------
 // Trie cache
 // ---------------------------------------------------------------------------
 
@@ -88,10 +97,15 @@ async function flush(): Promise<void> {
   });
 
   try {
+    const body = JSON.stringify({ inputs });
+    const compressed = await gzipCompress(body);
     const resp = await fetch(PREDICT_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ inputs }),
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Encoding": "gzip",
+      },
+      body: compressed,
     });
     if (!resp.ok) {
       throw new Error(`predict: ${resp.status} ${await resp.text()}`);
