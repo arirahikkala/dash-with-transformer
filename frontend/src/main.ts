@@ -1,4 +1,4 @@
-import type { Cursor, TokenDisplay } from "./types";
+import type { Cursor, LanguageModel, TokenDisplay } from "./types";
 import { createBackendClient } from "./backend";
 import { fromByteLevelModel } from "./models";
 import { normalizeCursor } from "./cursor";
@@ -19,13 +19,12 @@ const SPEED = 2;
 /** Cap dt to avoid huge jumps when the tab regains focus. */
 const MAX_DT = 0.05;
 
-async function main() {
-  const hashParams = new URLSearchParams(window.location.hash.slice(1));
-  const backendUrl = hashParams.get("backendUrl") ?? "http://localhost:8000";
-  const modelCallPrefix = hashParams.get("modelCallPrefix") ?? "";
-  const prefixBytes = new TextEncoder().encode(modelCallPrefix);
-
+function createModel(
+  backendUrl: string,
+  modelCallPrefix: string,
+): LanguageModel<readonly number[], number> {
   const { predictBytes } = createBackendClient(backendUrl);
+  const prefixBytes = new TextEncoder().encode(modelCallPrefix);
 
   const byteLevelModel =
     prefixBytes.length > 0
@@ -37,7 +36,16 @@ async function main() {
         }
       : predictBytes;
 
-  const model = fromByteLevelModel(byteLevelModel);
+  return fromByteLevelModel(byteLevelModel);
+}
+
+async function main() {
+  const hashParams = new URLSearchParams(window.location.hash.slice(1));
+  let backendUrl = hashParams.get("backendUrl") ?? "http://localhost:8000";
+  let modelCallPrefix = hashParams.get("modelCallPrefix") ?? "";
+
+  let model = createModel(backendUrl, modelCallPrefix);
+
   const display: TokenDisplay<number> = {
     label(cp) {
       if (cp === 32) return "\u25A1"; // □
@@ -72,6 +80,41 @@ async function main() {
     prefixToString: (prefix) => String.fromCodePoint(...prefix),
   };
 
+  // --- Config inputs ---
+  const backendUrlInput = document.getElementById(
+    "backend-url",
+  ) as HTMLInputElement;
+  const modelPrefixInput = document.getElementById(
+    "model-prefix",
+  ) as HTMLTextAreaElement;
+  backendUrlInput.value = backendUrl;
+  modelPrefixInput.value = modelCallPrefix;
+
+  function applyConfigChange() {
+    const newUrl = backendUrlInput.value;
+    const newPrefix = modelPrefixInput.value;
+    if (newUrl === backendUrl && newPrefix === modelCallPrefix) return;
+    backendUrl = newUrl;
+    modelCallPrefix = newPrefix;
+
+    const params = new URLSearchParams();
+    if (backendUrl !== "http://localhost:8000") {
+      params.set("backendUrl", backendUrl);
+    }
+    if (modelCallPrefix) params.set("modelCallPrefix", modelCallPrefix);
+    window.location.hash = params.toString();
+
+    model = createModel(backendUrl, modelCallPrefix);
+
+    renderController?.abort();
+    renderController = new AbortController();
+    render(renderController.signal);
+  }
+
+  backendUrlInput.addEventListener("blur", applyConfigChange);
+  modelPrefixInput.addEventListener("blur", applyConfigChange);
+
+  // --- DOM elements ---
   const prefixEl = document.getElementById("prefix-display")!;
   const nodeCanvas = document.getElementById(
     "node-canvas",
