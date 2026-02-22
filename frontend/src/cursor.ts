@@ -89,10 +89,14 @@ export async function normalizeCursor<T>(
     // --- Phase 2: try to descend into the smallest containing child ---
     if (prefix.length >= maxDepth) break;
 
+    const xf = toFloat(x);
     const yf = toFloat(y);
     let descended = false;
 
-    for await (const entry of model(prefix, yf, yf, 0)) {
+    // Since children are squares (width = height = probability p), a child
+    // can only contain the cursor if p >= 1 − x (its left edge 1−p <= x).
+    // Pass this as minSize to avoid materialising small tokens.
+    for await (const entry of model(prefix, yf, yf, Math.max(0, 1 - xf))) {
       const p = fromFloat(entry.end - entry.start);
       if (toFloat(p) <= 0) continue;
 
