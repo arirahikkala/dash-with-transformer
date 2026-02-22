@@ -1,5 +1,5 @@
 import type { Cursor, TokenDisplay } from "./types";
-import { predictBytes } from "./backend";
+import { createBackendClient } from "./backend";
 import { fromByteLevelModel } from "./models";
 import { normalizeCursor } from "./cursor";
 import { buildScene } from "./scene";
@@ -21,8 +21,11 @@ const MAX_DT = 0.05;
 
 async function main() {
   const hashParams = new URLSearchParams(window.location.hash.slice(1));
+  const backendUrl = hashParams.get("backendUrl") ?? "http://localhost:8000";
   const modelCallPrefix = hashParams.get("modelCallPrefix") ?? "";
   const prefixBytes = new TextEncoder().encode(modelCallPrefix);
+
+  const { predictBytes } = createBackendClient(backendUrl);
 
   const byteLevelModel =
     prefixBytes.length > 0

@@ -4,10 +4,6 @@
  * - Automatic request batching via microtask scheduling
  */
 
-const hashParams = new URLSearchParams(window.location.hash.slice(1));
-const BASE_URL = hashParams.get("backendUrl") ?? "http://localhost:8000";
-const PREDICT_URL = `${BASE_URL}/predict`;
-
 // ---------------------------------------------------------------------------
 // Request compression
 // ---------------------------------------------------------------------------
@@ -52,21 +48,6 @@ interface TrieResponse {
   children: Record<string, TrieResponse>;
 }
 
-/** Walk a trie response and populate the cache for all child prefixes. */
-function populateTrieCache(prefix: Uint8Array, trie: TrieResponse): void {
-  for (const [byteStr, childTrie] of Object.entries(trie.children)) {
-    const byte = Number(byteStr);
-    const childPrefix = new Uint8Array(prefix.length + 1);
-    childPrefix.set(prefix);
-    childPrefix[prefix.length] = byte;
-    const childNode = trieEnsure(cache, childPrefix);
-    if (!childNode.dist) {
-      childNode.dist = Promise.resolve(childTrie.dist);
-    }
-    populateTrieCache(childPrefix, childTrie);
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Batched requests
 // ---------------------------------------------------------------------------
@@ -79,83 +60,102 @@ interface PendingRequest {
   reject: (err: Error) => void;
 }
 
-const cache: TrieNode = { children: new Map() };
-let pending: PendingRequest[] = [];
-let flushScheduled = false;
-
-async function flush(): Promise<void> {
-  flushScheduled = false;
-  const batch = pending;
-  pending = [];
-  if (batch.length === 0) return;
-
-  const inputs = batch.map((req) => {
-    let bin = "";
-    for (const b of req.prefix) bin += String.fromCharCode(b);
-    return {
-      prefix: btoa(bin),
-      min_prob: req.minProb,
-    };
-  });
-
-  try {
-    const body = JSON.stringify({ inputs });
-    const compressed = await gzipCompress(body);
-    const resp = await fetch(PREDICT_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Content-Encoding": "gzip",
-      },
-      body: compressed,
-    });
-    if (!resp.ok) {
-      throw new Error(`predict: ${resp.status} ${await resp.text()}`);
-    }
-    const { predictions } = (await resp.json()) as {
-      predictions: TrieResponse[];
-    };
-    for (let i = 0; i < batch.length; i++) {
-      const trie = predictions[i];
-      batch[i].resolve(trie.dist);
-      populateTrieCache(batch[i].prefix, trie);
-    }
-  } catch (err) {
-    const error = err instanceof Error ? err : new Error(String(err));
-    for (const req of batch) {
-      req.node.dist = undefined; // clear so the prefix can be retried
-      req.reject(error);
-    }
-  }
+export interface BackendClient {
+  predictBytes(prefix: Uint8Array, minSize: number): Promise<number[]>;
 }
 
-/**
- * Predict the next-byte distribution for a given byte prefix.
- * Returns a 256-element probability array.
- *
- * The backend returns a trie of pre-expanded distributions based on
- * minSize, populating the cache for child prefixes.
- */
-export function predictBytes(
-  prefix: Uint8Array,
-  minSize: number,
-): Promise<number[]> {
-  const node = trieEnsure(cache, prefix);
-  if (node.dist) return node.dist;
-  const promise = new Promise<number[]>((resolve, reject) => {
-    pending.push({
-      prefix,
-      minProb: minSize,
-      node,
-      resolve,
-      reject,
-    });
-    if (!flushScheduled) {
-      flushScheduled = true;
-      setTimeout(flush, 500);
-      //      queueMicrotask(flush);
+export function createBackendClient(backendUrl: string): BackendClient {
+  const predictUrl = `${backendUrl}/predict`;
+  const cache: TrieNode = { children: new Map() };
+  let pending: PendingRequest[] = [];
+  let flushScheduled = false;
+
+  function populateTrieCache(
+    prefix: Uint8Array,
+    trie: TrieResponse,
+  ): void {
+    for (const [byteStr, childTrie] of Object.entries(trie.children)) {
+      const byte = Number(byteStr);
+      const childPrefix = new Uint8Array(prefix.length + 1);
+      childPrefix.set(prefix);
+      childPrefix[prefix.length] = byte;
+      const childNode = trieEnsure(cache, childPrefix);
+      if (!childNode.dist) {
+        childNode.dist = Promise.resolve(childTrie.dist);
+      }
+      populateTrieCache(childPrefix, childTrie);
     }
-  });
-  node.dist = promise;
-  return promise;
+  }
+
+  async function flush(): Promise<void> {
+    flushScheduled = false;
+    const batch = pending;
+    pending = [];
+    if (batch.length === 0) return;
+
+    const inputs = batch.map((req) => {
+      let bin = "";
+      for (const b of req.prefix) bin += String.fromCharCode(b);
+      return {
+        prefix: btoa(bin),
+        min_prob: req.minProb,
+      };
+    });
+
+    try {
+      const body = JSON.stringify({ inputs });
+      const compressed = await gzipCompress(body);
+      const resp = await fetch(predictUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Encoding": "gzip",
+        },
+        body: compressed,
+      });
+      if (!resp.ok) {
+        throw new Error(`predict: ${resp.status} ${await resp.text()}`);
+      }
+      const { predictions } = (await resp.json()) as {
+        predictions: TrieResponse[];
+      };
+      for (let i = 0; i < batch.length; i++) {
+        const trie = predictions[i];
+        batch[i].resolve(trie.dist);
+        populateTrieCache(batch[i].prefix, trie);
+      }
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      for (const req of batch) {
+        req.node.dist = undefined; // clear so the prefix can be retried
+        req.reject(error);
+      }
+    }
+  }
+
+  function predictBytes(
+    prefix: Uint8Array,
+    minSize: number,
+  ): Promise<number[]> {
+    const node = trieEnsure(cache, prefix);
+    if (node.dist) return node.dist;
+    const promise = new Promise<number[]>((resolve, reject) => {
+      pending.push({
+        prefix,
+        minProb: minSize,
+        node,
+        resolve,
+        reject,
+      });
+      if (!flushScheduled) {
+        flushScheduled = true;
+        setTimeout(flush, 500);
+        //      queueMicrotask(flush);
+      }
+    });
+    node.dist = promise;
+    return promise;
+  }
+
+  return { predictBytes };
 }
