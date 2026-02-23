@@ -411,35 +411,46 @@ export function fromCharCodeModel(
 // ---------------------------------------------------------------------------
 
 /**
- * Interpolate between two language models, creating a per-conditional mixture.
+ * Interpolate between one or more language models, creating a per-conditional
+ * weighted mixture.
  *
- * P_mix(token | prefix) = (1 - fraction) * P_a(token | prefix)
- *                        +      fraction  * P_b(token | prefix)
- *
- * Both models must have their alphabets in the same order: they may yield
+ * All models must have their alphabets in the same order: they may yield
  * values in different orders, but the CDF must be stacked in the same token
  * ordering.  Under this assumption, a token's interpolated extent is simply
- * the weighted combination of its extents in A and B:
+ * the weighted combination of its extents across all models:
  *
- *     start_mix = wA * startA + wB * startB
- *     end_mix   = wA * endA   + wB * endB
+ *     start_mix = Σ_i  w_i * start_i
+ *     end_mix   = Σ_i  w_i * end_i
  *
- * The implementation streams results from both models in parallel:
- * 1. Both models are queried with the caller's minSize (any token with
+ * The implementation streams results from all models in parallel:
+ * 1. All models are queried with the caller's minSize (any token with
  *    mixture probability >= minSize must have prob >= minSize in at least
- *    one model, since wA + wB = 1).
- * 2. Results are raced; as soon as a token has been received from both
+ *    one model, since Σw_i = 1).
+ * 2. Results are raced; as soon as a token has been received from all
  *    models, its interpolated extent is yielded immediately.
- * 3. After both streams exhaust, remainder tokens (returned by one model
- *    but not the other) are resolved via parallel specificToken queries.
+ * 3. After all streams exhaust, remainder tokens (not returned by every
+ *    model) are resolved via parallel specificToken queries.
+ *
+ * Weights are normalized to sum to 1. Negative weights throw an error.
  */
 export function interpolate<P, T>(
-  a: LanguageModel<P, T>,
-  b: LanguageModel<P, T>,
-  fraction: number,
+  components: { model: LanguageModel<P, T>; weight: number }[],
 ): LanguageModel<P, T> {
-  const wA = 1 - fraction;
-  const wB = fraction;
+  if (components.length === 0) {
+    throw new Error("interpolate requires at least one model");
+  }
+  for (const { weight } of components) {
+    if (weight < 0) {
+      throw new Error(`Negative weight: ${weight}`);
+    }
+  }
+  const totalWeight = components.reduce((s, c) => s + c.weight, 0);
+  if (totalWeight === 0) {
+    throw new Error("Total weight must be positive");
+  }
+  const weights = components.map((c) => c.weight / totalWeight);
+  const models = components.map((c) => c.model);
+  const n = models.length;
 
   return async function* (
     prefix,
@@ -448,87 +459,80 @@ export function interpolate<P, T>(
     minSize,
     specificToken?,
   ) {
-    // Fast path: look up a single token's extent in both models.
+    // Fast path: look up a single token's extent in all models.
     if (specificToken !== undefined) {
-      const [aEntry, bEntry] = await Promise.all([
-        first(a(prefix, 0, 0, 0, specificToken)),
-        first(b(prefix, 0, 0, 0, specificToken)),
-      ]);
-      if (!aEntry || !bEntry) return;
-      yield {
-        token: specificToken,
-        start: wA * aEntry.start + wB * bEntry.start,
-        end: wA * aEntry.end + wB * bEntry.end,
-      };
+      const entries = await Promise.all(
+        models.map((m) => first(m(prefix, 0, 0, 0, specificToken))),
+      );
+      if (entries.some((e) => !e)) return;
+      let start = 0;
+      let end = 0;
+      for (let i = 0; i < n; i++) {
+        start += weights[i] * entries[i]!.start;
+        end += weights[i] * entries[i]!.end;
+      }
+      yield { token: specificToken, start, end };
       return;
     }
 
-    // Query both models with full range and the caller's minSize.
+    // Query all models with full range and the caller's minSize.
     // Any token with mixture probability >= minSize must have probability
-    // >= minSize in at least one model (since wA + wB = 1).
-    const aMap = new Map<T, TokenProb<T>>();
-    const bMap = new Map<T, TokenProb<T>>();
+    // >= minSize in at least one model (since Σw_i = 1).
+    const maps: Map<T, TokenProb<T>>[] = models.map(() => new Map());
+    const yielded = new Set<T>();
 
-    for await (const { value: entry, index } of raceAsyncIterables([
-      a(prefix, 0, 1, minSize),
-      b(prefix, 0, 1, minSize),
-    ])) {
-      if (index === 0) {
-        aMap.set(entry.token, entry);
-        const bEntry = bMap.get(entry.token);
-        if (bEntry) {
-          const start = wA * entry.start + wB * bEntry.start;
-          const end = wA * entry.end + wB * bEntry.end;
-          if (
-            end >= rangeStart &&
-            start <= rangeEnd &&
-            end - start >= minSize
-          ) {
-            yield { token: entry.token, start, end };
-          }
+    for await (const { value: entry, index } of raceAsyncIterables(
+      models.map((m) => m(prefix, 0, 1, minSize)),
+    )) {
+      maps[index].set(entry.token, entry);
+
+      // Check if all models have now reported this token.
+      if (maps.every((m) => m.has(entry.token))) {
+        const token = entry.token;
+        let start = 0;
+        let end = 0;
+        for (let i = 0; i < n; i++) {
+          const e = maps[i].get(token)!;
+          start += weights[i] * e.start;
+          end += weights[i] * e.end;
         }
-      } else {
-        bMap.set(entry.token, entry);
-        const aEntry = aMap.get(entry.token);
-        if (aEntry) {
-          const start = wA * aEntry.start + wB * entry.start;
-          const end = wA * aEntry.end + wB * entry.end;
-          if (
-            end >= rangeStart &&
-            start <= rangeEnd &&
-            end - start >= minSize
-          ) {
-            yield { token: entry.token, start, end };
-          }
+        if (
+          end >= rangeStart &&
+          start <= rangeEnd &&
+          end - start >= minSize
+        ) {
+          yielded.add(token);
+          yield { token, start, end };
         }
       }
     }
 
-    // Remainder: tokens that appeared in only one model's output.
-    // Query the other model with specificToken for each.
-    const remainderPromises: Promise<TokenProb<T> | null>[] = [];
-
-    for (const [token, aEntry] of aMap) {
-      if (bMap.has(token)) continue;
-      remainderPromises.push(
-        first(b(prefix, 0, 1, 0, token)).then((bEntry) => {
-          if (!bEntry) return null;
-          const start = wA * aEntry.start + wB * bEntry.start;
-          const end = wA * aEntry.end + wB * bEntry.end;
-          if (end < rangeStart || start > rangeEnd || end - start < minSize)
-            return null;
-          return { token, start, end };
-        }),
-      );
+    // Remainder: tokens that appeared in some but not all models' output.
+    // For each, query the missing models with specificToken.
+    const allTokens = new Set<T>();
+    for (const m of maps) {
+      for (const token of m.keys()) allTokens.add(token);
     }
 
-    for (const [token, bEntry] of bMap) {
-      if (aMap.has(token)) continue;
+    const remainderPromises: Promise<TokenProb<T> | null>[] = [];
+
+    for (const token of allTokens) {
+      if (yielded.has(token)) continue;
       remainderPromises.push(
-        first(a(prefix, 0, 1, 0, token)).then((aEntry) => {
-          if (!aEntry) return null;
-          const start = wA * aEntry.start + wB * bEntry.start;
-          const end = wA * aEntry.end + wB * bEntry.end;
+        Promise.all(
+          models.map((m, i) =>
+            maps[i].has(token)
+              ? Promise.resolve(maps[i].get(token)!)
+              : first(m(prefix, 0, 1, 0, token)),
+          ),
+        ).then((entries) => {
+          if (entries.some((e) => !e)) return null;
+          let start = 0;
+          let end = 0;
+          for (let i = 0; i < n; i++) {
+            start += weights[i] * entries[i]!.start;
+            end += weights[i] * entries[i]!.end;
+          }
           if (end < rangeStart || start > rangeEnd || end - start < minSize)
             return null;
           return { token, start, end };

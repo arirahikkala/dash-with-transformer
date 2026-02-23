@@ -674,7 +674,10 @@ describe("interpolate", () => {
       { token: 2, probability: 0.75 },
     ]);
 
-    const mixed = interpolate(a, b, 0.5);
+    const mixed = interpolate([
+      { model: a, weight: 1 },
+      { model: b, weight: 1 },
+    ]);
     const result = await collect(mixed("", 0, 1, 0));
 
     expect(result).toHaveLength(2);
@@ -684,7 +687,7 @@ describe("interpolate", () => {
     }
   });
 
-  it("fraction=0 reproduces model A exactly", async () => {
+  it("weight=0 on B reproduces model A exactly", async () => {
     const a = simpleModel([
       { token: 1, probability: 0.6 },
       { token: 2, probability: 0.4 },
@@ -694,7 +697,10 @@ describe("interpolate", () => {
       { token: 2, probability: 0.9 },
     ]);
 
-    const mixed = interpolate(a, b, 0);
+    const mixed = interpolate([
+      { model: a, weight: 1 },
+      { model: b, weight: 0 },
+    ]);
     const [mixResult, aResult] = await Promise.all([
       collect(mixed("", 0, 1, 0)),
       collect(a("", 0, 1, 0)),
@@ -705,7 +711,7 @@ describe("interpolate", () => {
     expect(sort(mixResult)).toEqual(sort(aResult));
   });
 
-  it("fraction=1 reproduces model B exactly", async () => {
+  it("weight=0 on A reproduces model B exactly", async () => {
     const a = simpleModel([
       { token: 1, probability: 0.6 },
       { token: 2, probability: 0.4 },
@@ -715,7 +721,10 @@ describe("interpolate", () => {
       { token: 2, probability: 0.7 },
     ]);
 
-    const mixed = interpolate(a, b, 1);
+    const mixed = interpolate([
+      { model: a, weight: 0 },
+      { model: b, weight: 1 },
+    ]);
     const [mixResult, bResult] = await Promise.all([
       collect(mixed("", 0, 1, 0)),
       collect(b("", 0, 1, 0)),
@@ -738,7 +747,10 @@ describe("interpolate", () => {
       { token: 3, probability: 0.2 },
     ]);
 
-    const mixed = interpolate(a, b, 0.4);
+    const mixed = interpolate([
+      { model: a, weight: 0.6 },
+      { model: b, weight: 0.4 },
+    ]);
     const result = (await collect(mixed("", 0, 1, 0))).sort(
       (a, b) => a.start - b.start,
     );
@@ -760,7 +772,10 @@ describe("interpolate", () => {
       { token: 2, probability: 0.8 },
     ]);
 
-    const mixed = interpolate(a, b, 0.5);
+    const mixed = interpolate([
+      { model: a, weight: 1 },
+      { model: b, weight: 1 },
+    ]);
     const result = (await collect(mixed("", 0, 1, 0.3))).sort(
       (a, b) => a.start - b.start,
     );
@@ -782,7 +797,10 @@ describe("interpolate", () => {
       { token: 2, probability: 0.75 },
     ]);
 
-    const mixed = interpolate(a, b, 0.5);
+    const mixed = interpolate([
+      { model: a, weight: 1 },
+      { model: b, weight: 1 },
+    ]);
     const full = await collect(mixed("", 0, 1, 0));
     const specific = await collect(mixed("", 0, 1, 0, 2));
 
@@ -800,7 +818,10 @@ describe("interpolate", () => {
       { token: 2, probability: 0.2 },
     ]);
 
-    const mixed = interpolate(a, b, 0.5);
+    const mixed = interpolate([
+      { model: a, weight: 1 },
+      { model: b, weight: 1 },
+    ]);
     const result = await collect(mixed("", 0, 1, 0.3));
 
     expect(result).toHaveLength(1);
@@ -820,7 +841,10 @@ describe("interpolate", () => {
       { token: 2, probability: 0.5 },
     ]);
 
-    const mixed = interpolate(a, b, 0.5);
+    const mixed = interpolate([
+      { model: a, weight: 1 },
+      { model: b, weight: 1 },
+    ]);
     // Token 1 at [0, 0.5], token 2 at [0.5, 1.0]
     const result = await collect(mixed("", 0.6, 1, 0));
 
@@ -852,7 +876,10 @@ describe("interpolate", () => {
       { token: 2, probability: 0.5 },
     ]);
 
-    const mixed = interpolate(a, b, 0.5);
+    const mixed = interpolate([
+      { model: a, weight: 1 },
+      { model: b, weight: 1 },
+    ]);
     await collect(mixed("", 0, 1, 0));
 
     expect(maxConcurrency).toBe(2);
