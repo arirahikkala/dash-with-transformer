@@ -1,10 +1,14 @@
-import type { Cursor, LanguageModel, TokenDisplay } from "./types";
+import type { Cursor, LanguageModel } from "./types";
 import { createBackendClient } from "./backend";
 import { fromByteLevelModel } from "./models";
 import { normalizeCursor } from "./cursor";
 import { buildScene } from "./scene";
 import { renderScene } from "./render";
 import { loadSmolLM } from "./smollm";
+
+function prefixToString(prefix: readonly number[]): string {
+  return String.fromCodePoint(...prefix);
+}
 
 // ---------------------------------------------------------------------------
 // Main
@@ -47,40 +51,6 @@ async function main() {
   let mode = hashParams.get("mode") ?? "backend";
 
   let model = createModel(backendUrl, modelCallPrefix);
-
-  const display: TokenDisplay<number> = {
-    label(cp) {
-      if (cp === 32) return "\u25A1"; // □
-      if (cp === 10) return "\u23CE"; // ⏎
-      return String.fromCodePoint(cp);
-    },
-    color(cp) {
-      // Space: white
-      if (cp === 32) return "#ffffff";
-      // Lowercase a-z: hue cycle between light green (120) and cyan (180)
-      if (cp >= 97 && cp <= 122) {
-        const hue = (((cp - 97) * 137508) % 60) + 120;
-        return `hsl(${hue}, 40%, 85%)`;
-      }
-      // Uppercase A-Z: same cycle, slightly darker
-      if (cp >= 65 && cp <= 90) {
-        const hue = (((cp - 65) * 137508) % 60) + 120;
-        return `hsl(${hue}, 40%, 75%)`;
-      }
-      // Punctuation: dark green
-      if (
-        (cp >= 33 && cp <= 47) ||
-        (cp >= 58 && cp <= 64) ||
-        (cp >= 91 && cp <= 96) ||
-        (cp >= 123 && cp <= 126)
-      ) {
-        return `hsl(140, 50%, 30%)`;
-      }
-      // Everything else (digits, newline, non-ASCII): yellow
-      return `hsl(50, 90%, 45%)`;
-    },
-    prefixToString: (prefix) => String.fromCodePoint(...prefix),
-  };
 
   // --- Config inputs ---
   const modeSelect = document.getElementById(
@@ -228,7 +198,6 @@ async function main() {
       scene,
       nodeCanvas.width,
       nodeCanvas.height,
-      display,
       signal,
     );
   }
@@ -247,7 +216,7 @@ async function main() {
 
     if (version !== normalizeVersion) return;
     cursor = newCursor;
-    const text = display.prefixToString(cursor.prefix);
+    const text = prefixToString(cursor.prefix);
     if (prefixEl.textContent !== text) {
       prefixEl.textContent = text;
       prefixEl.scrollTop = prefixEl.scrollHeight;

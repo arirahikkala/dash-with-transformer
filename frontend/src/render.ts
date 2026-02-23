@@ -1,21 +1,46 @@
 import type { Scene, SceneNode } from "./types";
 
-/** Callbacks for rendering tokens of type T. */
-export interface RenderOptions<T> {
-  /** Display label for a token. */
-  label: (token: T) => string;
-  /** CSS color string for a token. */
-  color: (token: T) => string;
+/** Display label for a Unicode codepoint token. */
+function label(cp: number): string {
+  if (cp === 32) return "\u25A1"; // □
+  if (cp === 10) return "\u23CE"; // ⏎
+  return String.fromCodePoint(cp);
+}
+
+/** CSS color for a Unicode codepoint token. */
+function color(cp: number): string {
+  // Space: white
+  if (cp === 32) return "#ffffff";
+  // Lowercase a-z: hue cycle between light green (120) and cyan (180)
+  if (cp >= 97 && cp <= 122) {
+    const hue = (((cp - 97) * 137.508) % 60) + 120;
+    return `hsl(${hue}, 40%, 85%)`;
+  }
+  // Uppercase A-Z: same cycle, slightly darker
+  if (cp >= 65 && cp <= 90) {
+    const hue = (((cp - 65) * 137.508) % 60) + 120;
+    return `hsl(${hue}, 40%, 75%)`;
+  }
+  // Punctuation: dark green
+  if (
+    (cp >= 33 && cp <= 47) ||
+    (cp >= 58 && cp <= 64) ||
+    (cp >= 91 && cp <= 96) ||
+    (cp >= 123 && cp <= 126)
+  ) {
+    return `hsl(140, 50%, 30%)`;
+  }
+  // Everything else (digits, newline, non-ASCII): yellow
+  return `hsl(50, 90%, 45%)`;
 }
 
 /** Render nodes as right-aligned squares, parent first then children on top. */
-async function renderNodes<T>(
+async function renderNodes(
   nodeCtx: CanvasRenderingContext2D,
   labelCtx: CanvasRenderingContext2D,
-  nodes: AsyncIterable<SceneNode<T>>,
+  nodes: AsyncIterable<SceneNode<number>>,
   nodeWidth: number,
   height: number,
-  opts: RenderOptions<T>,
   signal: AbortSignal,
   labelMinX: number,
 ): Promise<void> {
@@ -27,7 +52,7 @@ async function renderNodes<T>(
     const x0 = nodeWidth - side;
 
     // Colored square, right-aligned (node canvas)
-    nodeCtx.fillStyle = opts.color(node.token);
+    nodeCtx.fillStyle = color(node.token);
     nodeCtx.fillRect(x0, py0, side, side);
 
     // Subtle border at the top (node canvas)
@@ -46,7 +71,7 @@ async function renderNodes<T>(
       labelCtx.fillStyle = "#000";
       labelCtx.textBaseline = "middle";
       labelCtx.textAlign = "left";
-      const labelText = opts.label(node.token);
+      const labelText = label(node.token);
       const labelX = Math.max(x0 + 4, labelMinX);
       const pad = 4;
       const halfFont = fontSize / 2;
@@ -71,7 +96,6 @@ async function renderNodes<T>(
       node.children,
       nodeWidth,
       height,
-      opts,
       signal,
       childLabelMinX,
     );
@@ -79,13 +103,12 @@ async function renderNodes<T>(
 }
 
 /** Render a Scene onto dual canvases (nodes + labels). */
-export async function renderScene<T>(
+export async function renderScene(
   nodeCtx: CanvasRenderingContext2D,
   labelCtx: CanvasRenderingContext2D,
-  scene: Scene<T>,
+  scene: Scene<number>,
   nodeWidth: number,
   height: number,
-  opts: RenderOptions<T>,
   signal: AbortSignal,
 ): Promise<void> {
   // Light background on node canvas
@@ -101,7 +124,6 @@ export async function renderScene<T>(
     scene.children,
     nodeWidth,
     height,
-    opts,
     signal,
     0,
   );
