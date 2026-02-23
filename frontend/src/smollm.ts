@@ -80,6 +80,7 @@ export async function loadSmolLM(
   onProgress?.("Loading model\u2026");
   const model = await AutoModelForCausalLM.from_pretrained(MODEL_ID, {
     device: "webgpu",
+    dtype: 'fp16',
     progress_callback: (progress: {
       status: string;
       file?: string;
@@ -163,5 +164,5 @@ export async function loadSmolLM(
   };
 
   onProgress?.("Ready!");
-  return fromCharCodeModel(detokenize(tokenModel, vocab, 8, 1e-4));
+  return fromCharCodeModel(detokenize(tokenModel, vocab, 2, 1e-3));
 }
