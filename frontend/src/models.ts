@@ -436,6 +436,9 @@ export function fromCharCodeModel(
 export function interpolate<P, T>(
   components: { model: LanguageModel<P, T>; weight: number }[],
 ): LanguageModel<P, T> {
+  if (components.length === 1) {
+    return components[0].model;
+  }
   if (components.length === 0) {
     throw new Error("interpolate requires at least one model");
   }
@@ -496,11 +499,7 @@ export function interpolate<P, T>(
           start += weights[i] * e.start;
           end += weights[i] * e.end;
         }
-        if (
-          end >= rangeStart &&
-          start <= rangeEnd &&
-          end - start >= minSize
-        ) {
+        if (end >= rangeStart && start <= rangeEnd && end - start >= minSize) {
           yielded.add(token);
           yield { token, start, end };
         }
