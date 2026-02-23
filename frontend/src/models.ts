@@ -50,13 +50,13 @@ function decodeUtf8Bytes(bytes: number[]): number {
 // ---------------------------------------------------------------------------
 
 /**
- * Merge multiple async iterables, yielding values as soon as any source
- * produces one.  Order across sources is non-deterministic (whichever
- * source's `.next()` settles first wins).
+ * Race multiple async iterables, yielding values tagged with their source
+ * index as soon as any source produces one.  Order across sources is
+ * non-deterministic (whichever source's `.next()` settles first wins).
  */
-async function* mergeAsyncIterables<T>(
+async function* raceAsyncIterables<T>(
   iterables: AsyncIterable<T>[],
-): AsyncGenerator<T> {
+): AsyncGenerator<{ value: T; index: number }> {
   const iterators = iterables.map((iter) => iter[Symbol.asyncIterator]());
   const active = new Map<
     number,
@@ -73,12 +73,25 @@ async function* mergeAsyncIterables<T>(
     if (result.done) {
       active.delete(index);
     } else {
-      yield result.value;
+      yield { value: result.value, index };
       active.set(
         index,
         iterators[index].next().then((r) => ({ result: r, index })),
       );
     }
+  }
+}
+
+/**
+ * Merge multiple async iterables, yielding values as soon as any source
+ * produces one.  Order across sources is non-deterministic (whichever
+ * source's `.next()` settles first wins).
+ */
+async function* mergeAsyncIterables<T>(
+  iterables: AsyncIterable<T>[],
+): AsyncGenerator<T> {
+  for await (const { value } of raceAsyncIterables(iterables)) {
+    yield value;
   }
 }
 
@@ -344,10 +357,7 @@ async function* expandSurrogate(
   const high = highEntry.token;
   const groupSize = highEntry.end - highEntry.start;
 
-  const subRangeStart = Math.max(
-    0,
-    (rangeStart - highEntry.start) / groupSize,
-  );
+  const subRangeStart = Math.max(0, (rangeStart - highEntry.start) / groupSize);
   const subRangeEnd = Math.min(1, (rangeEnd - highEntry.start) / groupSize);
   const subMinSize = minSize / groupSize;
 
@@ -445,27 +455,28 @@ export function fromCharCodeModel(
 // Language model interpolation
 // ---------------------------------------------------------------------------
 
-/** Collect all items from an async iterable. */
-async function collectAll<T>(iter: AsyncIterable<T>): Promise<T[]> {
-  const result: T[] = [];
-  for await (const item of iter) result.push(item);
-  return result;
-}
-
 /**
  * Interpolate between two language models, creating a per-conditional mixture.
  *
  * P_mix(token | prefix) = (1 - fraction) * P_a(token | prefix)
  *                        +      fraction  * P_b(token | prefix)
  *
- * Both underlying models are queried in parallel with full range and minSize 0,
- * since the mixture changes cumulative positions.  The caller's rangeStart /
- * rangeEnd / minSize / specificToken filters are applied after merging.
+ * Both models must have their alphabets in the same order: they may yield
+ * values in different orders, but the CDF must be stacked in the same token
+ * ordering.  Under this assumption, a token's interpolated extent is simply
+ * the weighted combination of its extents in A and B:
  *
- * Token ordering smoothly interpolates between model A's and model B's orderings
- * via weighted-average sort keys: wA * startA + wB * startB.  Tokens absent from
- * a model use position 1 (end-of-distribution) as the sentinel, so at fraction=0
- * the ordering exactly matches model A, and at fraction=1 it matches model B.
+ *     start_mix = wA * startA + wB * startB
+ *     end_mix   = wA * endA   + wB * endB
+ *
+ * The implementation streams results from both models in parallel:
+ * 1. Both models are queried with the caller's minSize (any token with
+ *    mixture probability >= minSize must have prob >= minSize in at least
+ *    one model, since wA + wB = 1).
+ * 2. Results are raced; as soon as a token has been received from both
+ *    models, its interpolated extent is yielded immediately.
+ * 3. After both streams exhaust, remainder tokens (returned by one model
+ *    but not the other) are resolved via parallel specificToken queries.
  */
 export function interpolate<P, T>(
   a: LanguageModel<P, T>,
@@ -475,67 +486,104 @@ export function interpolate<P, T>(
   const wA = 1 - fraction;
   const wB = fraction;
 
-  return async function* (prefix, rangeStart, rangeEnd, minSize, specificToken?) {
-    // Query both models for the full distribution in parallel.
-    const [aEntries, bEntries] = await Promise.all([
-      collectAll(a(prefix, 0, 1, 0)),
-      collectAll(b(prefix, 0, 1, 0)),
-    ]);
-
-    // Index model B entries by token.
-    const bByToken = new Map<T, TokenProb<T>>();
-    for (const e of bEntries) bByToken.set(e.token, e);
-
-    // Merge: compute mixture probabilities and blended sort keys.
-    const seen = new Set<T>();
-    const merged: { token: T; prob: number; sortKey: number }[] = [];
-
-    for (const ae of aEntries) {
-      seen.add(ae.token);
-      const pa = ae.end - ae.start;
-      const be = bByToken.get(ae.token);
-      const pb = be ? be.end - be.start : 0;
-      const prob = wA * pa + wB * pb;
-      if (prob === 0) continue;
-      merged.push({
-        token: ae.token,
-        prob,
-        sortKey: wA * ae.start + wB * (be?.start ?? 1),
-      });
+  return async function* (
+    prefix,
+    rangeStart,
+    rangeEnd,
+    minSize,
+    specificToken?,
+  ) {
+    // Fast path: look up a single token's extent in both models.
+    if (specificToken !== undefined) {
+      const [aEntry, bEntry] = await Promise.all([
+        first(a(prefix, 0, 0, 0, specificToken)),
+        first(b(prefix, 0, 0, 0, specificToken)),
+      ]);
+      if (!aEntry || !bEntry) return;
+      yield {
+        token: specificToken,
+        start: wA * aEntry.start + wB * bEntry.start,
+        end: wA * aEntry.end + wB * bEntry.end,
+      };
+      return;
     }
 
-    for (const be of bEntries) {
-      if (seen.has(be.token)) continue;
-      const pb = be.end - be.start;
-      const prob = wB * pb;
-      if (prob === 0) continue;
-      merged.push({
-        token: be.token,
-        prob,
-        sortKey: wA + wB * be.start,
-      });
-    }
+    // Query both models with full range and the caller's minSize.
+    // Any token with mixture probability >= minSize must have probability
+    // >= minSize in at least one model (since wA + wB = 1).
+    const aMap = new Map<T, TokenProb<T>>();
+    const bMap = new Map<T, TokenProb<T>>();
 
-    merged.sort((x, y) => x.sortKey - y.sortKey);
-
-    // Assign cumulative positions and yield.
-    let cum = 0;
-    for (const entry of merged) {
-      const start = cum;
-      const end = cum + entry.prob;
-      cum = end;
-
-      if (specificToken !== undefined) {
-        if (entry.token === specificToken) {
-          yield { token: entry.token, start, end };
-          return;
+    for await (const { value: entry, index } of raceAsyncIterables([
+      a(prefix, 0, 1, minSize),
+      b(prefix, 0, 1, minSize),
+    ])) {
+      if (index === 0) {
+        aMap.set(entry.token, entry);
+        const bEntry = bMap.get(entry.token);
+        if (bEntry) {
+          const start = wA * entry.start + wB * bEntry.start;
+          const end = wA * entry.end + wB * bEntry.end;
+          if (
+            end >= rangeStart &&
+            start <= rangeEnd &&
+            end - start >= minSize
+          ) {
+            yield { token: entry.token, start, end };
+          }
         }
-        continue;
+      } else {
+        bMap.set(entry.token, entry);
+        const aEntry = aMap.get(entry.token);
+        if (aEntry) {
+          const start = wA * aEntry.start + wB * entry.start;
+          const end = wA * aEntry.end + wB * entry.end;
+          if (
+            end >= rangeStart &&
+            start <= rangeEnd &&
+            end - start >= minSize
+          ) {
+            yield { token: entry.token, start, end };
+          }
+        }
       }
+    }
 
-      if (end < rangeStart || start > rangeEnd) continue;
-      if (entry.prob < minSize) continue;
-      yield { token: entry.token, start, end };
+    // Remainder: tokens that appeared in only one model's output.
+    // Query the other model with specificToken for each.
+    const remainderPromises: Promise<TokenProb<T> | null>[] = [];
+
+    for (const [token, aEntry] of aMap) {
+      if (bMap.has(token)) continue;
+      remainderPromises.push(
+        first(b(prefix, 0, 1, 0, token)).then((bEntry) => {
+          if (!bEntry) return null;
+          const start = wA * aEntry.start + wB * bEntry.start;
+          const end = wA * aEntry.end + wB * bEntry.end;
+          if (end < rangeStart || start > rangeEnd || end - start < minSize)
+            return null;
+          return { token, start, end };
+        }),
+      );
+    }
+
+    for (const [token, bEntry] of bMap) {
+      if (aMap.has(token)) continue;
+      remainderPromises.push(
+        first(a(prefix, 0, 1, 0, token)).then((aEntry) => {
+          if (!aEntry) return null;
+          const start = wA * aEntry.start + wB * bEntry.start;
+          const end = wA * aEntry.end + wB * bEntry.end;
+          if (end < rangeStart || start > rangeEnd || end - start < minSize)
+            return null;
+          return { token, start, end };
+        }),
+      );
+    }
+
+    for (const promise of remainderPromises) {
+      const result = await promise;
+      if (result) yield result;
     }
   };
 }

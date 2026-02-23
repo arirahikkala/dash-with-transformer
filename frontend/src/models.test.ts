@@ -700,7 +700,9 @@ describe("interpolate", () => {
       collect(a("", 0, 1, 0)),
     ]);
 
-    expect(mixResult).toEqual(aResult);
+    const sort = <T extends { start: number }>(arr: T[]) =>
+      [...arr].sort((a, b) => a.start - b.start);
+    expect(sort(mixResult)).toEqual(sort(aResult));
   });
 
   it("fraction=1 reproduces model B exactly", async () => {
@@ -709,8 +711,8 @@ describe("interpolate", () => {
       { token: 2, probability: 0.4 },
     ]);
     const b = simpleModel([
-      { token: 3, probability: 0.7 },
-      { token: 4, probability: 0.3 },
+      { token: 1, probability: 0.3 },
+      { token: 2, probability: 0.7 },
     ]);
 
     const mixed = interpolate(a, b, 1);
@@ -719,27 +721,9 @@ describe("interpolate", () => {
       collect(b("", 0, 1, 0)),
     ]);
 
-    expect(mixResult).toEqual(bResult);
-  });
-
-  it("handles non-overlapping token sets", async () => {
-    const a = simpleModel([
-      { token: 1, probability: 0.5 },
-      { token: 2, probability: 0.5 },
-    ]);
-    const b = simpleModel([
-      { token: 3, probability: 0.5 },
-      { token: 4, probability: 0.5 },
-    ]);
-
-    const mixed = interpolate(a, b, 0.5);
-    const result = await collect(mixed("", 0, 1, 0));
-
-    expect(result).toHaveLength(4);
-    for (const entry of result) {
-      expect(entry.end - entry.start).toBeCloseTo(0.25);
-    }
-    expect(result[result.length - 1].end).toBeCloseTo(1);
+    const sort = <T extends { start: number }>(arr: T[]) =>
+      [...arr].sort((a, b) => a.start - b.start);
+    expect(sort(mixResult)).toEqual(sort(bResult));
   });
 
   it("produces contiguous entries summing to 1", async () => {
@@ -749,19 +733,43 @@ describe("interpolate", () => {
       { token: 3, probability: 0.2 },
     ]);
     const b = simpleModel([
+      { token: 1, probability: 0.4 },
       { token: 2, probability: 0.4 },
-      { token: 3, probability: 0.4 },
-      { token: 4, probability: 0.2 },
+      { token: 3, probability: 0.2 },
     ]);
 
     const mixed = interpolate(a, b, 0.4);
-    const result = await collect(mixed("", 0, 1, 0));
+    const result = (await collect(mixed("", 0, 1, 0))).sort(
+      (a, b) => a.start - b.start,
+    );
 
     expect(result[0].start).toBeCloseTo(0);
     for (let i = 1; i < result.length; i++) {
       expect(result[i].start).toBeCloseTo(result[i - 1].end);
     }
     expect(result[result.length - 1].end).toBeCloseTo(1);
+  });
+
+  it("resolves tokens below minSize in one model via specificToken", async () => {
+    const a = simpleModel([
+      { token: 1, probability: 0.8 },
+      { token: 2, probability: 0.2 },
+    ]);
+    const b = simpleModel([
+      { token: 1, probability: 0.2 },
+      { token: 2, probability: 0.8 },
+    ]);
+
+    const mixed = interpolate(a, b, 0.5);
+    const result = (await collect(mixed("", 0, 1, 0.3))).sort(
+      (a, b) => a.start - b.start,
+    );
+
+    // Both tokens have mixture probability 0.5 >= 0.3,
+    // but each is below minSize in one model (0.2 < 0.3).
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ token: 1, start: 0, end: 0.5 });
+    expect(result[1]).toEqual({ token: 2, start: 0.5, end: 1.0 });
   });
 
   it("specificToken returns the correct entry", async () => {
