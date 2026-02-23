@@ -184,10 +184,10 @@ describe("range filtering", () => {
 });
 
 // ---------------------------------------------------------------------------
-// minSize filtering
+// minProb filtering
 // ---------------------------------------------------------------------------
 
-describe("minSize filtering", () => {
+describe("minProb filtering", () => {
   const vocab = ["a", "b", "c"];
   const model = makePlainModel({
     "[]": [
@@ -197,16 +197,16 @@ describe("minSize filtering", () => {
     ],
   });
 
-  it("excludes entries below minSize", async () => {
+  it("excludes entries below minProb", async () => {
     const lm = detokenize(model, vocab, 8);
-    // a=0.5, b=0.25, c=0.25 — minSize 0.3 keeps only a
+    // a=0.5, b=0.25, c=0.25 — minProb 0.3 keeps only a
     const result = await collect(lm([], 0, 1, 0.3));
 
     expect(result).toHaveLength(1);
     expect(result[0].token).toBe(97); // 'a'
   });
 
-  it("keeps entries at exactly minSize", async () => {
+  it("keeps entries at exactly minProb", async () => {
     const lm = detokenize(model, vocab, 8);
     const result = await collect(lm([], 0, 1, 0.25));
     expect(result).toHaveLength(3);

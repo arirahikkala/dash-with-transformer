@@ -61,7 +61,7 @@ interface PendingRequest {
 }
 
 export interface BackendClient {
-  predictBytes(prefix: Uint8Array, minSize: number): Promise<number[]>;
+  predictBytes(prefix: Uint8Array, minProb: number): Promise<number[]>;
 }
 
 export function createBackendClient(backendUrl: string): BackendClient {
@@ -135,14 +135,14 @@ export function createBackendClient(backendUrl: string): BackendClient {
 
   function predictBytes(
     prefix: Uint8Array,
-    minSize: number,
+    minProb: number,
   ): Promise<number[]> {
     const node = trieEnsure(cache, prefix);
     if (node.dist) return node.dist;
     const promise = new Promise<number[]>((resolve, reject) => {
       pending.push({
         prefix,
-        minProb: minSize,
+        minProb: minProb,
         node,
         resolve,
         reject,

@@ -8,7 +8,7 @@
  * extent on [0, 1]; the token's probability is `end − start`.
  *
  * A node's extents depend only on the prefix — the query parameters
- * (rangeStart, rangeEnd, minSize) only govern whether it is listed.
+ * (rangeStart, rangeEnd, minProb) only govern whether it is listed.
  */
 export interface TokenProb<T> {
   readonly token: T;
@@ -44,7 +44,7 @@ export type PlainLanguageModel<P, T> = (
  * @param prefix        - The token prefix.
  * @param rangeStart    - Only return entries overlapping [rangeStart, rangeEnd].
  * @param rangeEnd      - Upper bound of the visible range.
- * @param minSize       - Only return entries with (end − start) ≥ minSize.
+ * @param minProb       - Only return entries with (end − start) ≥ minProb.
  * @param specificToken - If set, return only this token's extent (ignoring
  *                        range/size filters) with minimal computation.
  *
@@ -55,7 +55,7 @@ export type LanguageModel<P, T> = (
   prefix: P,
   rangeStart: number,
   rangeEnd: number,
-  minSize: number,
+  minProb: number,
   specificToken?: T,
 ) => AsyncIterable<TokenProb<T>>;
 
@@ -70,7 +70,7 @@ export function adaptModel<P, T>(
     prefix,
     rangeStart,
     rangeEnd,
-    minSize,
+    minProb,
     specificToken,
   ) {
     const dist = await inner(prefix);
@@ -87,7 +87,7 @@ export function adaptModel<P, T>(
         continue;
       }
       if (end < rangeStart || start > rangeEnd) continue;
-      if (entry.probability < minSize) continue;
+      if (entry.probability < minProb) continue;
       yield { token: entry.token, start, end };
     }
   };

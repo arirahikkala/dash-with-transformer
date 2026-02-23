@@ -169,10 +169,10 @@ describe("range filtering on surrogates", () => {
 });
 
 // ---------------------------------------------------------------------------
-// minSize filtering
+// minProb filtering
 // ---------------------------------------------------------------------------
 
-describe("minSize filtering on surrogates", () => {
+describe("minProb filtering on surrogates", () => {
   const model = makeCharCodeModel({
     "": [
       { token: 97, probability: 0.5 },
@@ -186,7 +186,7 @@ describe("minSize filtering on surrogates", () => {
 
   it("excludes expanded surrogates below threshold", async () => {
     const lm = fromCharCodeModel(model);
-    // Each emoji has absolute prob 0.25, minSize 0.3 excludes them
+    // Each emoji has absolute prob 0.25, minProb 0.3 excludes them
     const result = await collect(lm([], 0, 1, 0.3));
 
     expect(result).toHaveLength(1);
@@ -277,7 +277,7 @@ describe("extent determinism", () => {
     expect(emojiNarrow.end).toBe(emojiFull.end);
   });
 
-  it("produces same extents regardless of minSize", async () => {
+  it("produces same extents regardless of minProb", async () => {
     const lm = fromCharCodeModel(model);
     const all = await collect(lm([], 0, 1, 0));
     const filtered = await collect(lm([], 0, 1, 0.2));

@@ -56,7 +56,7 @@ function decodeUtf8Bytes(bytes: number[]): number {
 
 type ByteLevelModel = (
   bytePrefix: Uint8Array,
-  minSize: number,
+  minProb: number,
 ) => Promise<number[]>;
 
 /**
@@ -80,19 +80,19 @@ async function* expandMultiByte(
   cumStart: number,
   rangeStart: number,
   rangeEnd: number,
-  minSize: number,
+  minProb: number,
 ): AsyncGenerator<TokenProb<number>> {
   if (partialBytes.length === totalBytes) {
     const start = cumStart;
     const end = cumStart + probSoFar;
     if (end < rangeStart || start > rangeEnd) return;
-    if (end - start < minSize) return;
+    if (end - start < minProb) return;
     yield { token: decodeUtf8Bytes(partialBytes), start, end };
     return;
   }
 
   const queryPrefix = new Uint8Array([...bytePrefix, ...partialBytes]);
-  const dist = await model(queryPrefix, minSize);
+  const dist = await model(queryPrefix, minProb);
 
   // Single pass: accumulate cumulative positions for ALL non-zero
   // continuation bytes (so later sub-groups are positioned correctly),
@@ -106,7 +106,7 @@ async function* expandMultiByte(
     cum += subProb;
 
     if (cum < rangeStart || subCumStart > rangeEnd) continue;
-    if (cum - subCumStart < minSize) continue;
+    if (cum - subCumStart < minProb) continue;
 
     subtrees.push(
       expandMultiByte(
@@ -118,7 +118,7 @@ async function* expandMultiByte(
         subCumStart,
         rangeStart,
         rangeEnd,
-        minSize,
+        minProb,
       ),
     );
   }
@@ -185,11 +185,11 @@ async function lookupSpecificToken(
  * Byte-level model calls are minimised:
  * - 1 call for the first-byte distribution per query.
  * - Multi-byte groups entirely outside [rangeStart, rangeEnd] are skipped.
- * - Multi-byte groups with total probability < minSize are skipped
+ * - Multi-byte groups with total probability < minProb are skipped
  *   (every codepoint in the group must be ≤ the group total).
  * - The same pruning is applied recursively at every continuation-byte
  *   level, so e.g. a 3-byte group only queries the third byte for
- *   second-byte sub-groups that overlap the range and meet minSize.
+ *   second-byte sub-groups that overlap the range and meet minProb.
  *
  * Calls are maximally parallel: all continuation queries at the same
  * depth run concurrently, yielding results as they arrive.
@@ -205,7 +205,7 @@ export function fromByteLevelModel(
     prefix: readonly number[],
     rangeStart: number,
     rangeEnd: number,
-    minSize: number,
+    minProb: number,
     specificToken?: number,
   ) {
     const bytePrefix = codepointsToUtf8(prefix);
@@ -222,7 +222,7 @@ export function fromByteLevelModel(
     }
 
     // 1. First-byte distribution (1 model call).
-    const firstByteDist = await byteLevelModel(bytePrefix, minSize);
+    const firstByteDist = await byteLevelModel(bytePrefix, minProb);
 
     // 2. Cumulative start position for every first-byte group.
     //    P(all codepoints starting with byte b) = P(b), so the
@@ -242,7 +242,7 @@ export function fromByteLevelModel(
       const start = firstByteCumStart[b];
       const end = firstByteCumStart[b] + firstByteDist[b];
       if (end < rangeStart || start > rangeEnd) continue;
-      if (end - start < minSize) continue;
+      if (end - start < minProb) continue;
       yield { token: b, start, end };
     }
 
@@ -258,8 +258,8 @@ export function fromByteLevelModel(
 
       // Skip groups entirely outside the visible range.
       if (groupEnd < rangeStart || firstByteCumStart[b] > rangeEnd) continue;
-      // Skip groups where every codepoint is below minSize.
-      if (firstByteDist[b] < minSize) continue;
+      // Skip groups where every codepoint is below minProb.
+      if (firstByteDist[b] < minProb) continue;
 
       expansions.push(
         expandMultiByte(
@@ -271,7 +271,7 @@ export function fromByteLevelModel(
           firstByteCumStart[b],
           rangeStart,
           rangeEnd,
-          minSize,
+          minProb,
         ),
       );
     }
@@ -307,20 +307,20 @@ async function* expandSurrogate(
   highEntry: TokenProb<number>,
   rangeStart: number,
   rangeEnd: number,
-  minSize: number,
+  minProb: number,
 ): AsyncGenerator<TokenProb<number>> {
   const high = highEntry.token;
   const groupSize = highEntry.end - highEntry.start;
 
   const subRangeStart = Math.max(0, (rangeStart - highEntry.start) / groupSize);
   const subRangeEnd = Math.min(1, (rangeEnd - highEntry.start) / groupSize);
-  const subMinSize = minSize / groupSize;
+  const subMinProb = minProb / groupSize;
 
   for await (const lowEntry of charCodeModel(
     [...charCodePrefix, high],
     subRangeStart,
     subRangeEnd,
-    subMinSize,
+    subMinProb,
   )) {
     const low = lowEntry.token;
     if (low < 0xdc00 || low > 0xdfff) continue;
@@ -347,7 +347,7 @@ export function fromCharCodeModel(
     prefix: readonly number[],
     rangeStart: number,
     rangeEnd: number,
-    minSize: number,
+    minProb: number,
     specificToken?: number,
   ) {
     const charCodePrefix = codepointsToCharCodes(prefix);
@@ -381,7 +381,7 @@ export function fromCharCodeModel(
       charCodePrefix,
       rangeStart,
       rangeEnd,
-      minSize,
+      minProb,
     )) {
       const cc = entry.token;
       if (cc >= 0xd800 && cc <= 0xdbff) {
@@ -392,7 +392,7 @@ export function fromCharCodeModel(
             entry,
             rangeStart,
             rangeEnd,
-            minSize,
+            minProb,
           ),
         );
       } else if (cc >= 0xdc00 && cc <= 0xdfff) {
@@ -423,8 +423,8 @@ export function fromCharCodeModel(
  *     end_mix   = Σ_i  w_i * end_i
  *
  * The implementation streams results from all models in parallel:
- * 1. All models are queried with the caller's minSize (any token with
- *    mixture probability >= minSize must have prob >= minSize in at least
+ * 1. All models are queried with the caller's minProb (any token with
+ *    mixture probability >= minProb must have prob >= minProb in at least
  *    one model, since Σw_i = 1).
  * 2. Results are raced; as soon as a token has been received from all
  *    models, its interpolated extent is yielded immediately.
@@ -459,7 +459,7 @@ export function interpolate<P, T>(
     prefix,
     rangeStart,
     rangeEnd,
-    minSize,
+    minProb,
     specificToken?,
   ) {
     // Fast path: look up a single token's extent in all models.
@@ -478,14 +478,14 @@ export function interpolate<P, T>(
       return;
     }
 
-    // Query all models with full range and the caller's minSize.
-    // Any token with mixture probability >= minSize must have probability
-    // >= minSize in at least one model (since Σw_i = 1).
+    // Query all models with full range and the caller's minProb.
+    // Any token with mixture probability >= minProb must have probability
+    // >= minProb in at least one model (since Σw_i = 1).
     const maps: Map<T, TokenProb<T>>[] = models.map(() => new Map());
     const yielded = new Set<T>();
 
     for await (const { value: entry, index } of raceAsyncIterables(
-      models.map((m) => m(prefix, 0, 1, minSize)),
+      models.map((m) => m(prefix, 0, 1, minProb)),
     )) {
       maps[index].set(entry.token, entry);
 
@@ -499,7 +499,7 @@ export function interpolate<P, T>(
           start += weights[i] * e.start;
           end += weights[i] * e.end;
         }
-        if (end >= rangeStart && start <= rangeEnd && end - start >= minSize) {
+        if (end >= rangeStart && start <= rangeEnd && end - start >= minProb) {
           yielded.add(token);
           yield { token, start, end };
         }
@@ -532,7 +532,7 @@ export function interpolate<P, T>(
             start += weights[i] * entries[i]!.start;
             end += weights[i] * entries[i]!.end;
           }
-          if (end < rangeStart || start > rangeEnd || end - start < minSize)
+          if (end < rangeStart || start > rangeEnd || end - start < minProb)
             return null;
           return { token, start, end };
         }),

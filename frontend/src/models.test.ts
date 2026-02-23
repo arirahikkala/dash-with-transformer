@@ -8,7 +8,7 @@ import { adaptModel, type LanguageModel } from "./types";
 
 type ByteLevelModel = (
   bytePrefix: Uint8Array,
-  minSize: number,
+  minProb: number,
 ) => Promise<number[]>;
 
 /** Collect all items from an async iterable into an array. */
@@ -326,25 +326,25 @@ describe("closed-range with deep multi-byte", () => {
 });
 
 // ---------------------------------------------------------------------------
-// minSize filtering
+// minProb filtering
 // ---------------------------------------------------------------------------
 
-describe("minSize filtering", () => {
+describe("minProb filtering", () => {
   const table: Record<string, number[]> = {
     "": makeDist({ 97: 0.5, 0xc3: 0.5 }),
     c3: makeDist({ 0xa8: 0.5, 0xa9: 0.5 }),
   };
 
-  it("excludes entries below minSize", async () => {
+  it("excludes entries below minProb", async () => {
     const lm = fromByteLevelModel(makeMockModel(table));
-    // a=0.5, è=0.25, é=0.25  —  minSize 0.3 keeps only a
+    // a=0.5, è=0.25, é=0.25  —  minProb 0.3 keeps only a
     const result = await collect(lm([], 0, 1, 0.3));
 
     expect(result).toHaveLength(1);
     expect(result[0].token).toBe(97);
   });
 
-  it("keeps entries at exactly minSize", async () => {
+  it("keeps entries at exactly minProb", async () => {
     const lm = fromByteLevelModel(makeMockModel(table));
     const result = await collect(lm([], 0, 1, 0.25));
     expect(result).toHaveLength(3);
@@ -375,7 +375,7 @@ describe("extent determinism", () => {
     expect(eNarrow.end).toBe(eFull.end);
   });
 
-  it("produces identical extents for different minSize queries", async () => {
+  it("produces identical extents for different minProb queries", async () => {
     const lm = fromByteLevelModel(makeMockModel(table));
 
     const all = await collect(lm([], 0, 1, 0));
@@ -407,7 +407,7 @@ describe("call minimisation", () => {
     expect(calls).toEqual([""]);
   });
 
-  it("skips groups below minSize", async () => {
+  it("skips groups below minProb", async () => {
     const table: Record<string, number[]> = {
       "": makeDist({ 97: 0.5, 0xc3: 0.25, 0xe4: 0.25 }),
       c3: makeDist({ 0xa9: 1.0 }),
@@ -417,7 +417,7 @@ describe("call minimisation", () => {
     const { model, calls } = makeTrackingModel(table);
     const lm = fromByteLevelModel(model);
 
-    // minSize 0.3 means both multi-byte groups (0.25 each) are skipped
+    // minProb 0.3 means both multi-byte groups (0.25 each) are skipped
     await collect(lm([], 0, 1, 0.3));
     expect(calls).toEqual([""]);
   });
@@ -464,7 +464,7 @@ describe("call minimisation", () => {
     expect(calls).not.toContain("e4b9"); // out of range → skipped
   });
 
-  it("skips deep continuation sub-groups below minSize", async () => {
+  it("skips deep continuation sub-groups below minProb", async () => {
     const table: Record<string, number[]> = {
       "": makeDist({ 0xe4: 1.0 }),
       e4: makeDist({ 0xb8: 0.75, 0xb9: 0.25 }),
@@ -474,7 +474,7 @@ describe("call minimisation", () => {
     const { model, calls } = makeTrackingModel(table);
     const lm = fromByteLevelModel(model);
 
-    // minSize 0.3 — B9 sub-group (prob 0.25) is below threshold
+    // minProb 0.3 — B9 sub-group (prob 0.25) is below threshold
     await collect(lm([], 0, 1, 0.3));
 
     expect(calls).toContain("e4b8"); // 0.75 ≥ 0.3 → expanded
@@ -762,7 +762,7 @@ describe("interpolate", () => {
     expect(result[result.length - 1].end).toBeCloseTo(1);
   });
 
-  it("resolves tokens below minSize in one model via specificToken", async () => {
+  it("resolves tokens below minProb in one model via specificToken", async () => {
     const a = simpleModel([
       { token: 1, probability: 0.8 },
       { token: 2, probability: 0.2 },
@@ -781,7 +781,7 @@ describe("interpolate", () => {
     );
 
     // Both tokens have mixture probability 0.5 >= 0.3,
-    // but each is below minSize in one model (0.2 < 0.3).
+    // but each is below minProb in one model (0.2 < 0.3).
     expect(result).toHaveLength(2);
     expect(result[0]).toEqual({ token: 1, start: 0, end: 0.5 });
     expect(result[1]).toEqual({ token: 2, start: 0.5, end: 1.0 });
@@ -808,7 +808,7 @@ describe("interpolate", () => {
     expect(specific[0]).toEqual(full.find((e) => e.token === 2));
   });
 
-  it("respects minSize filtering", async () => {
+  it("respects minProb filtering", async () => {
     const a = simpleModel([
       { token: 1, probability: 0.8 },
       { token: 2, probability: 0.2 },

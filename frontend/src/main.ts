@@ -29,11 +29,11 @@ function createModel(
 
   const byteLevelModel =
     prefixBytes.length > 0
-      ? (prefix: Uint8Array, minSize: number) => {
+      ? (prefix: Uint8Array, minProb: number) => {
           const full = new Uint8Array(prefixBytes.length + prefix.length);
           full.set(prefixBytes);
           full.set(prefix, prefixBytes.length);
-          return predictBytes(full, minSize);
+          return predictBytes(full, minProb);
         }
       : predictBytes;
 

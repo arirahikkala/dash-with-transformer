@@ -98,7 +98,7 @@ async function ascendToSceneRoot<T>(
  * Recursively build visible children for a given prefix.
  *
  * The model handles filtering: we map the visible window back to
- * probability space and pass rangeStart/rangeEnd/minSize so the model
+ * probability space and pass rangeStart/rangeEnd/minProb so the model
  * only returns entries that are visible and large enough.
  *
  * @param scale   - height of this node in window-relative units
@@ -121,9 +121,9 @@ async function* buildChildren<T>(
   // y = offset + cumProb * scale  →  cumProb = (y − offset) / scale
   const rangeStart = -offset / scale;
   const rangeEnd = (1 - offset) / scale;
-  const minSize = minAbsProb / absProb;
+  const minProb = minAbsProb / absProb;
 
-  for await (const entry of model(prefix, rangeStart, rangeEnd, minSize)) {
+  for await (const entry of model(prefix, rangeStart, rangeEnd, minProb)) {
     const p = entry.end - entry.start;
     const y0 = offset + entry.start * scale;
     const y1 = offset + entry.end * scale;
