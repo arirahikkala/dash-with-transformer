@@ -116,8 +116,6 @@ export async function loadSmolLM(
   const tokenModel: PlainLanguageModel<readonly string[], string> = async (
     prefix: readonly string[],
   ): Promise<readonly PlainTokenProb<string>[]> => {
-    console.log("predicting on prefix", prefix);
-    const preEverything = performance.now();
     // Convert token strings to IDs, always prepend BOS
     const ids = [bosTokenId];
     for (const tok of prefix) {
@@ -136,12 +134,10 @@ export async function loadSmolLM(
       [1, seqLen],
     );
 
-    const preForward = performance.now();
     const output = await model.forward({
       input_ids: inputIds,
       attention_mask: attentionMask,
     });
-    console.log(`forward: ${performance.now() - preForward}`);
 
     // Extract last-position logits: shape [1, seq_len, vocab_size]
     const logitsData = output.logits.data as Float32Array;
@@ -154,9 +150,7 @@ export async function loadSmolLM(
       lastLogits[i] = logitsData[offset + i];
     }
 
-    const preSoftmax = performance.now();
     const probs = softmax(lastLogits) as number[];
-    console.log(`softmax: ${performance.now() - preSoftmax}`);
 
     const result: PlainTokenProb<string>[] = [];
     for (let i = 0; i < vSize; i++) {
@@ -165,7 +159,6 @@ export async function loadSmolLM(
         result.push({ token: vocab[i], probability: p });
       }
     }
-    console.log(`the whole shebang: ${performance.now() - preEverything}`);
     return result;
   };
 
