@@ -118,6 +118,8 @@ export interface SceneNode<T> {
 export interface Scene<T> {
   /** Top-level prediction nodes. */
   children: AsyncIterable<SceneNode<T>>;
+  /** Length of the prefix at the scene root. */
+  prefixLength: number;
 }
 
 /** Extract the first element from an async iterable, or undefined if empty. */

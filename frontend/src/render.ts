@@ -7,18 +7,18 @@ function label(cp: number): string {
   return String.fromCodePoint(cp);
 }
 
-/** CSS color for a Unicode codepoint token. */
-function color(cp: number): string {
+/** CSS color for a Unicode codepoint token at a given depth. */
+function color(cp: number, depth: number): string {
   // Space: white
   if (cp === 32) return "#ffffff";
-  // Lowercase a-z: hue cycle between light green (120) and cyan (180)
+  // Lowercase a-z: hue cycles by depth between light green (120) and cyan (180)
   if (cp >= 97 && cp <= 122) {
-    const hue = (((cp - 97) * 137.508) % 60) + 120;
+    const hue = ((depth * 137.508) % 60) + 120;
     return `hsl(${hue}, 40%, 85%)`;
   }
   // Uppercase A-Z: same cycle, slightly darker
   if (cp >= 65 && cp <= 90) {
-    const hue = (((cp - 65) * 137.508) % 60) + 120;
+    const hue = ((depth * 137.508) % 60) + 120;
     return `hsl(${hue}, 40%, 75%)`;
   }
   // Punctuation: dark green
@@ -43,6 +43,7 @@ async function renderNodes(
   height: number,
   signal: AbortSignal,
   labelMinX: number,
+  depth: number,
 ): Promise<void> {
   for await (const node of nodes) {
     if (signal.aborted) return;
@@ -52,7 +53,7 @@ async function renderNodes(
     const x0 = nodeWidth - side;
 
     // Colored square, right-aligned (node canvas)
-    nodeCtx.fillStyle = color(node.token);
+    nodeCtx.fillStyle = color(node.token, depth);
     nodeCtx.fillRect(x0, py0, side, side);
 
     // Subtle border at the top (node canvas)
@@ -98,6 +99,7 @@ async function renderNodes(
       height,
       signal,
       childLabelMinX,
+      depth + 1,
     );
   }
 }
@@ -126,5 +128,6 @@ export async function renderScene(
     height,
     signal,
     0,
+    scene.prefixLength,
   );
 }

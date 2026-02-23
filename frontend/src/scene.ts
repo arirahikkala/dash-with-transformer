@@ -204,5 +204,5 @@ export async function buildScene<T>(
     maxD,
   );
 
-  return { children };
+  return { children, prefixLength: scenePrefix.length };
 }
