@@ -17,6 +17,23 @@ export interface TokenProb<T> {
 }
 
 /**
+ * A plain token-probability pair, before cumulative extents are computed.
+ */
+export interface PlainTokenProb<T> {
+  readonly token: T;
+  readonly probability: number;
+}
+
+/**
+ * A simple language model that returns a plain probability distribution
+ * (without cumulative extents or filtering).  Use `adaptModel` to convert
+ * to a full `LanguageModel`.
+ */
+export type PlainLanguageModel<P, T> = (
+  prefix: P,
+) => Promise<readonly PlainTokenProb<T>[]>;
+
+/**
  * A language model: given a prefix and visibility constraints, return
  * the matching entries from the next-token distribution.
  *
@@ -47,7 +64,7 @@ export type LanguageModel<P, T> = (
  * that computes cumulative extents and handles range/size filtering.
  */
 export function adaptModel<P, T>(
-  inner: (prefix: P) => Promise<readonly { token: T; probability: number }[]>,
+  inner: (prefix: P) => Promise<readonly PlainTokenProb<T>[]>,
 ): LanguageModel<P, T> {
   return async function* (
     prefix,

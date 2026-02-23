@@ -4,28 +4,76 @@ import {
   softmax,
   Tensor,
 } from "@huggingface/transformers";
-import type { LanguageModel, TokenProb } from "./types";
+import type {
+  LanguageModel,
+  PlainLanguageModel,
+  PlainTokenProb,
+} from "./types";
 import { detokenize } from "./detokenize";
+import { fromCharCodeModel } from "./models";
 
 const MODEL_ID = "onnx-community/SmolLM2-135M-ONNX";
 
-/**
- * Convert a raw SentencePiece vocabulary piece to the text it represents.
- */
+// ---------------------------------------------------------------------------
+// GPT-2 byte-level BPE decoding
+//
+// GPT-2's tokenizer maps every byte to a printable Unicode code point so the
+// vocabulary contains no whitespace / control characters.  To recover the
+// actual text a token represents we reverse the mapping: Unicode code point →
+// original byte value, then decode the byte sequence as UTF-8.
+// ---------------------------------------------------------------------------
+
+/** Build the reverse lookup: Unicode code point → byte value. */
+function buildUnicodeToByteMap(): Map<number, number> {
+  // Bytes that map to themselves (printable ASCII + Latin-1 supplement subset)
+  const direct: number[] = [];
+  for (let b = 0x21; b <= 0x7e; b++) direct.push(b); // '!' .. '~'
+  for (let b = 0xa1; b <= 0xac; b++) direct.push(b); // '¡' .. '¬'
+  for (let b = 0xae; b <= 0xff; b++) direct.push(b); // '®' .. 'ÿ'
+
+  const directSet = new Set(direct);
+  const map = new Map<number, number>();
+
+  for (const b of direct) map.set(b, b); // identity mapping
+
+  // Remaining bytes (0x00-0x20, 0x7F-0xA0, 0xAD) are shifted to U+0100..
+  let n = 0;
+  for (let b = 0; b < 256; b++) {
+    if (!directSet.has(b)) {
+      map.set(0x100 + n, b);
+      n++;
+    }
+  }
+  return map;
+}
+
+const UNICODE_TO_BYTE = buildUnicodeToByteMap();
+
+/** Decode a GPT-2 BPE token string into the actual text it represents. */
 function pieceToText(piece: string, specialTokens: Set<string>): string {
   if (specialTokens.has(piece)) return "";
 
-  // Byte tokens: <0xHH>
-  const m = piece.match(/^<0x([0-9A-Fa-f]{2})>$/);
-  if (m) return String.fromCharCode(parseInt(m[1], 16));
-
-  // SentencePiece: ▁ (U+2581) represents a space
-  return piece.split("\u2581").join(" ");
+  const bytes: number[] = [];
+  for (const ch of piece) {
+    const cp = ch.codePointAt(0)!;
+    const b = UNICODE_TO_BYTE.get(cp);
+    if (b === undefined) {
+      // Not part of the GPT-2 byte mapping — keep the character as-is.
+      // (Shouldn't happen for a well-formed GPT-2 vocabulary.)
+      const encoded = new TextEncoder().encode(ch);
+      for (const byte of encoded) bytes.push(byte);
+    } else {
+      bytes.push(b);
+    }
+  }
+  return new TextDecoder("utf-8", { fatal: false }).decode(
+    Uint8Array.from(bytes),
+  );
 }
 
 export async function loadSmolLM(
   onProgress?: (message: string) => void,
-): Promise<LanguageModel<number>> {
+): Promise<LanguageModel<readonly number[], number>> {
   onProgress?.("Loading tokenizer\u2026");
   const tokenizer = await AutoTokenizer.from_pretrained(MODEL_ID);
 
@@ -64,9 +112,9 @@ export async function loadSmolLM(
   const bosTokenId: number = (tokenizer as any).bos_token_id ?? 1;
 
   // Token-level language model: prefix is an array of decoded token strings
-  const tokenModel: LanguageModel<string> = async (
+  const tokenModel: PlainLanguageModel<readonly string[], string> = async (
     prefix: readonly string[],
-  ): Promise<readonly TokenProb<string>[]> => {
+  ): Promise<readonly PlainTokenProb<string>[]> => {
     console.log("predicting on prefix", prefix);
     const preEverything = performance.now();
     // Convert token strings to IDs, always prepend BOS
@@ -109,7 +157,7 @@ export async function loadSmolLM(
     const probs = softmax(lastLogits) as number[];
     console.log(`softmax: ${performance.now() - preSoftmax}`);
 
-    const result: TokenProb<string>[] = [];
+    const result: PlainTokenProb<string>[] = [];
     for (let i = 0; i < vSize; i++) {
       const p = probs[i];
       if (p > 0 && vocab[i].length > 0) {
@@ -121,5 +169,5 @@ export async function loadSmolLM(
   };
 
   onProgress?.("Ready!");
-  return detokenize(tokenModel, vocab, 8, 1e-4);
+  return fromCharCodeModel(detokenize(tokenModel, vocab, 8, 1e-4));
 }
