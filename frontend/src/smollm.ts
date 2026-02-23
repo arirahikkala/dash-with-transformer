@@ -113,55 +113,105 @@ export async function loadSmolLM(
 
   const bosTokenId: number = (tokenizer as any).bos_token_id ?? 1;
 
-  // Token-level language model: prefix is an array of decoded token strings
-  const tokenModel: PlainLanguageModel<readonly string[], string> = async (
-    prefix: readonly string[],
-  ): Promise<readonly PlainTokenProb<string>[]> => {
-    // Convert token strings to IDs, always prepend BOS
-    const ids = [bosTokenId];
-    for (const tok of prefix) {
-      const id = textToId.get(tok);
-      if (id !== undefined) ids.push(id);
+  // Token-level language model with microtask batching: concurrent calls are
+  // collected and forwarded to model.forward() in a single batched invocation.
+  const tokenModel: PlainLanguageModel<readonly string[], string> = (() => {
+    interface PendingRequest {
+      ids: number[];
+      resolve: (result: readonly PlainTokenProb<string>[]) => void;
+      reject: (err: Error) => void;
     }
 
-    const seqLen = ids.length;
-    const inputIds = new Tensor("int64", BigInt64Array.from(ids.map(BigInt)), [
-      1,
-      seqLen,
-    ]);
-    const attentionMask = new Tensor(
-      "int64",
-      BigInt64Array.from(new Array(seqLen).fill(1n)),
-      [1, seqLen],
-    );
+    let pending: PendingRequest[] = [];
+    let flushScheduled = false;
 
-    const output = await model.forward({
-      input_ids: inputIds,
-      attention_mask: attentionMask,
-    });
+    async function flush(): Promise<void> {
+      flushScheduled = false;
+      const batch = pending;
+      pending = [];
+      if (batch.length === 0) return;
 
-    // Extract last-position logits: shape [1, seq_len, vocab_size]
-    const logitsData = output.logits.data as Float32Array;
-    const vSize = output.logits.dims[2];
-    const offset = (seqLen - 1) * vSize;
+      try {
+        const batchSize = batch.length;
+        const maxSeqLen = Math.max(...batch.map((r) => r.ids.length));
 
-    // Copy to a plain Array for softmax (avoid typed-array edge cases)
-    const lastLogits = new Array<number>(vSize);
-    for (let i = 0; i < vSize; i++) {
-      lastLogits[i] = logitsData[offset + i];
-    }
+        // Right-pad sequences; attention mask distinguishes real vs pad tokens
+        const allInputIds = new BigInt64Array(batchSize * maxSeqLen);
+        const allAttentionMask = new BigInt64Array(batchSize * maxSeqLen);
 
-    const probs = softmax(lastLogits) as number[];
+        for (let b = 0; b < batchSize; b++) {
+          const ids = batch[b].ids;
+          for (let i = 0; i < ids.length; i++) {
+            allInputIds[b * maxSeqLen + i] = BigInt(ids[i]);
+            allAttentionMask[b * maxSeqLen + i] = 1n;
+          }
+        }
 
-    const result: PlainTokenProb<string>[] = [];
-    for (let i = 0; i < vSize; i++) {
-      const p = probs[i];
-      if (p > 0 && vocab[i].length > 0) {
-        result.push({ token: vocab[i], probability: p });
+        const inputIds = new Tensor("int64", allInputIds, [
+          batchSize,
+          maxSeqLen,
+        ]);
+        const attentionMask = new Tensor("int64", allAttentionMask, [
+          batchSize,
+          maxSeqLen,
+        ]);
+
+        const output = await model.forward({
+          input_ids: inputIds,
+          attention_mask: attentionMask,
+        });
+
+        // output.logits shape: [batchSize, maxSeqLen, vocabSize]
+        const logitsData = output.logits.data as Float32Array;
+        const vSize = output.logits.dims[2];
+
+        for (let b = 0; b < batchSize; b++) {
+          const seqLen = batch[b].ids.length;
+          const lastPos = seqLen - 1;
+          const offset = (b * maxSeqLen + lastPos) * vSize;
+
+          const lastLogits = new Array<number>(vSize);
+          for (let i = 0; i < vSize; i++) {
+            lastLogits[i] = logitsData[offset + i];
+          }
+
+          const probs = softmax(lastLogits) as number[];
+
+          const result: PlainTokenProb<string>[] = [];
+          for (let i = 0; i < vSize; i++) {
+            const p = probs[i];
+            if (p > 0 && vocab[i].length > 0) {
+              result.push({ token: vocab[i], probability: p });
+            }
+          }
+          batch[b].resolve(result);
+        }
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        for (const req of batch) req.reject(error);
       }
     }
-    return result;
-  };
+
+    return async (
+      prefix: readonly string[],
+    ): Promise<readonly PlainTokenProb<string>[]> => {
+      const ids = [bosTokenId];
+      for (const tok of prefix) {
+        const id = textToId.get(tok);
+        if (id !== undefined) ids.push(id);
+      }
+
+      return new Promise<readonly PlainTokenProb<string>[]>(
+        (resolve, reject) => {
+          pending.push({ ids, resolve, reject });
+          if (!flushScheduled) {
+            flushScheduled = true;
+            queueMicrotask(flush);
+          }
+        },
+      );
+    };
+  })();
 
   onProgress?.("Ready!");
   return fromCharCodeModel(detokenize(tokenModel, vocab, 2, 1e-3));
