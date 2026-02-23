@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { fromByteLevelModel } from "./models";
+import { fromByteLevelModel, interpolate } from "./models";
+import { adaptModel, type LanguageModel } from "./types";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -648,5 +649,204 @@ describe("edge cases", () => {
 
     await collect(lm([], 0, 1, 0));
     expect(calls).toEqual([""]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// interpolate
+// ---------------------------------------------------------------------------
+
+describe("interpolate", () => {
+  /** Create a model that always returns the given distribution (ignores prefix). */
+  function simpleModel(
+    dist: { token: number; probability: number }[],
+  ): LanguageModel<string, number> {
+    return adaptModel(async () => dist);
+  }
+
+  it("computes correct mixture probabilities", async () => {
+    const a = simpleModel([
+      { token: 1, probability: 0.75 },
+      { token: 2, probability: 0.25 },
+    ]);
+    const b = simpleModel([
+      { token: 1, probability: 0.25 },
+      { token: 2, probability: 0.75 },
+    ]);
+
+    const mixed = interpolate(a, b, 0.5);
+    const result = await collect(mixed("", 0, 1, 0));
+
+    expect(result).toHaveLength(2);
+    // 0.5 * 0.75 + 0.5 * 0.25 = 0.5 for both tokens
+    for (const entry of result) {
+      expect(entry.end - entry.start).toBeCloseTo(0.5);
+    }
+  });
+
+  it("fraction=0 reproduces model A exactly", async () => {
+    const a = simpleModel([
+      { token: 1, probability: 0.6 },
+      { token: 2, probability: 0.4 },
+    ]);
+    const b = simpleModel([
+      { token: 1, probability: 0.1 },
+      { token: 2, probability: 0.9 },
+    ]);
+
+    const mixed = interpolate(a, b, 0);
+    const [mixResult, aResult] = await Promise.all([
+      collect(mixed("", 0, 1, 0)),
+      collect(a("", 0, 1, 0)),
+    ]);
+
+    expect(mixResult).toEqual(aResult);
+  });
+
+  it("fraction=1 reproduces model B exactly", async () => {
+    const a = simpleModel([
+      { token: 1, probability: 0.6 },
+      { token: 2, probability: 0.4 },
+    ]);
+    const b = simpleModel([
+      { token: 3, probability: 0.7 },
+      { token: 4, probability: 0.3 },
+    ]);
+
+    const mixed = interpolate(a, b, 1);
+    const [mixResult, bResult] = await Promise.all([
+      collect(mixed("", 0, 1, 0)),
+      collect(b("", 0, 1, 0)),
+    ]);
+
+    expect(mixResult).toEqual(bResult);
+  });
+
+  it("handles non-overlapping token sets", async () => {
+    const a = simpleModel([
+      { token: 1, probability: 0.5 },
+      { token: 2, probability: 0.5 },
+    ]);
+    const b = simpleModel([
+      { token: 3, probability: 0.5 },
+      { token: 4, probability: 0.5 },
+    ]);
+
+    const mixed = interpolate(a, b, 0.5);
+    const result = await collect(mixed("", 0, 1, 0));
+
+    expect(result).toHaveLength(4);
+    for (const entry of result) {
+      expect(entry.end - entry.start).toBeCloseTo(0.25);
+    }
+    expect(result[result.length - 1].end).toBeCloseTo(1);
+  });
+
+  it("produces contiguous entries summing to 1", async () => {
+    const a = simpleModel([
+      { token: 1, probability: 0.3 },
+      { token: 2, probability: 0.5 },
+      { token: 3, probability: 0.2 },
+    ]);
+    const b = simpleModel([
+      { token: 2, probability: 0.4 },
+      { token: 3, probability: 0.4 },
+      { token: 4, probability: 0.2 },
+    ]);
+
+    const mixed = interpolate(a, b, 0.4);
+    const result = await collect(mixed("", 0, 1, 0));
+
+    expect(result[0].start).toBeCloseTo(0);
+    for (let i = 1; i < result.length; i++) {
+      expect(result[i].start).toBeCloseTo(result[i - 1].end);
+    }
+    expect(result[result.length - 1].end).toBeCloseTo(1);
+  });
+
+  it("specificToken returns the correct entry", async () => {
+    const a = simpleModel([
+      { token: 1, probability: 0.75 },
+      { token: 2, probability: 0.25 },
+    ]);
+    const b = simpleModel([
+      { token: 1, probability: 0.25 },
+      { token: 2, probability: 0.75 },
+    ]);
+
+    const mixed = interpolate(a, b, 0.5);
+    const full = await collect(mixed("", 0, 1, 0));
+    const specific = await collect(mixed("", 0, 1, 0, 2));
+
+    expect(specific).toHaveLength(1);
+    expect(specific[0]).toEqual(full.find((e) => e.token === 2));
+  });
+
+  it("respects minSize filtering", async () => {
+    const a = simpleModel([
+      { token: 1, probability: 0.8 },
+      { token: 2, probability: 0.2 },
+    ]);
+    const b = simpleModel([
+      { token: 1, probability: 0.8 },
+      { token: 2, probability: 0.2 },
+    ]);
+
+    const mixed = interpolate(a, b, 0.5);
+    const result = await collect(mixed("", 0, 1, 0.3));
+
+    expect(result).toHaveLength(1);
+    expect(result[0].token).toBe(1);
+    // Position must match the unfiltered distribution
+    expect(result[0].start).toBe(0);
+    expect(result[0].end - result[0].start).toBeCloseTo(0.8);
+  });
+
+  it("respects range filtering", async () => {
+    const a = simpleModel([
+      { token: 1, probability: 0.5 },
+      { token: 2, probability: 0.5 },
+    ]);
+    const b = simpleModel([
+      { token: 1, probability: 0.5 },
+      { token: 2, probability: 0.5 },
+    ]);
+
+    const mixed = interpolate(a, b, 0.5);
+    // Token 1 at [0, 0.5], token 2 at [0.5, 1.0]
+    const result = await collect(mixed("", 0.6, 1, 0));
+
+    expect(result).toHaveLength(1);
+    expect(result[0].token).toBe(2);
+  });
+
+  it("queries both models in parallel", async () => {
+    let activeCalls = 0;
+    let maxConcurrency = 0;
+
+    const makeSlowModel = (
+      dist: readonly { token: number; probability: number }[],
+    ): LanguageModel<string, number> =>
+      adaptModel(async () => {
+        activeCalls++;
+        maxConcurrency = Math.max(maxConcurrency, activeCalls);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        activeCalls--;
+        return dist;
+      });
+
+    const a = makeSlowModel([
+      { token: 1, probability: 0.5 },
+      { token: 2, probability: 0.5 },
+    ]);
+    const b = makeSlowModel([
+      { token: 1, probability: 0.5 },
+      { token: 2, probability: 0.5 },
+    ]);
+
+    const mixed = interpolate(a, b, 0.5);
+    await collect(mixed("", 0, 1, 0));
+
+    expect(maxConcurrency).toBe(2);
   });
 });

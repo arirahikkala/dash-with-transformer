@@ -1,5 +1,6 @@
 /**
  * Adapt a byte-level UTF-8 language model into a codepoint-level model.
+ * Also: interpolation between arbitrary language models.
  */
 import { first, type LanguageModel, type TokenProb } from "./types";
 
@@ -311,7 +312,6 @@ export function fromByteLevelModel(
   };
 }
 
-// ---------------------------------------------------------------------------
 // UTF-16 char code → Unicode codepoint adapter
 // ---------------------------------------------------------------------------
 
@@ -438,5 +438,104 @@ export function fromCharCodeModel(
     }
 
     yield* mergeAsyncIterables(expansions);
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Language model interpolation
+// ---------------------------------------------------------------------------
+
+/** Collect all items from an async iterable. */
+async function collectAll<T>(iter: AsyncIterable<T>): Promise<T[]> {
+  const result: T[] = [];
+  for await (const item of iter) result.push(item);
+  return result;
+}
+
+/**
+ * Interpolate between two language models, creating a per-conditional mixture.
+ *
+ * P_mix(token | prefix) = (1 - fraction) * P_a(token | prefix)
+ *                        +      fraction  * P_b(token | prefix)
+ *
+ * Both underlying models are queried in parallel with full range and minSize 0,
+ * since the mixture changes cumulative positions.  The caller's rangeStart /
+ * rangeEnd / minSize / specificToken filters are applied after merging.
+ *
+ * Token ordering smoothly interpolates between model A's and model B's orderings
+ * via weighted-average sort keys: wA * startA + wB * startB.  Tokens absent from
+ * a model use position 1 (end-of-distribution) as the sentinel, so at fraction=0
+ * the ordering exactly matches model A, and at fraction=1 it matches model B.
+ */
+export function interpolate<P, T>(
+  a: LanguageModel<P, T>,
+  b: LanguageModel<P, T>,
+  fraction: number,
+): LanguageModel<P, T> {
+  const wA = 1 - fraction;
+  const wB = fraction;
+
+  return async function* (prefix, rangeStart, rangeEnd, minSize, specificToken?) {
+    // Query both models for the full distribution in parallel.
+    const [aEntries, bEntries] = await Promise.all([
+      collectAll(a(prefix, 0, 1, 0)),
+      collectAll(b(prefix, 0, 1, 0)),
+    ]);
+
+    // Index model B entries by token.
+    const bByToken = new Map<T, TokenProb<T>>();
+    for (const e of bEntries) bByToken.set(e.token, e);
+
+    // Merge: compute mixture probabilities and blended sort keys.
+    const seen = new Set<T>();
+    const merged: { token: T; prob: number; sortKey: number }[] = [];
+
+    for (const ae of aEntries) {
+      seen.add(ae.token);
+      const pa = ae.end - ae.start;
+      const be = bByToken.get(ae.token);
+      const pb = be ? be.end - be.start : 0;
+      const prob = wA * pa + wB * pb;
+      if (prob === 0) continue;
+      merged.push({
+        token: ae.token,
+        prob,
+        sortKey: wA * ae.start + wB * (be?.start ?? 1),
+      });
+    }
+
+    for (const be of bEntries) {
+      if (seen.has(be.token)) continue;
+      const pb = be.end - be.start;
+      const prob = wB * pb;
+      if (prob === 0) continue;
+      merged.push({
+        token: be.token,
+        prob,
+        sortKey: wA + wB * be.start,
+      });
+    }
+
+    merged.sort((x, y) => x.sortKey - y.sortKey);
+
+    // Assign cumulative positions and yield.
+    let cum = 0;
+    for (const entry of merged) {
+      const start = cum;
+      const end = cum + entry.prob;
+      cum = end;
+
+      if (specificToken !== undefined) {
+        if (entry.token === specificToken) {
+          yield { token: entry.token, start, end };
+          return;
+        }
+        continue;
+      }
+
+      if (end < rangeStart || start > rangeEnd) continue;
+      if (entry.prob < minSize) continue;
+      yield { token: entry.token, start, end };
+    }
   };
 }
