@@ -79,6 +79,7 @@ export async function loadSmolLM(
 
   onProgress?.("Loading model\u2026");
   const model = await AutoModelForCausalLM.from_pretrained(MODEL_ID, {
+    device: "webgpu",
     progress_callback: (progress: {
       status: string;
       file?: string;
