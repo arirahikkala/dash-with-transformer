@@ -112,6 +112,18 @@
         height: 6rem;
         resize: vertical;
       }
+      #config-bar select {
+        font-family: monospace;
+        font-size: 0.85rem;
+        padding: 0.2rem 0.4rem;
+        border: 1px solid #ccc;
+        border-radius: 3px;
+      }
+      #webgpu-status {
+        font-size: 0.85rem;
+        color: #666;
+        display: none;
+      }
     </style>
   </head>
   <body>
@@ -130,8 +142,15 @@
       </div>
     </div>
     <div id="config-bar">
-      <label>Backend URL <input id="backend-url" type="text" spellcheck="false" /></label>
+      <label>Mode
+        <select id="inference-mode">
+          <option value="backend">Backend</option>
+          <option value="webgpu">WebGPU</option>
+        </select>
+      </label>
+      <label id="backend-url-label">Backend URL <input id="backend-url" type="text" spellcheck="false" /></label>
     </div>
+    <div id="webgpu-status"></div>
     <label id="prefix-label">Prefix
       <textarea id="model-prefix" spellcheck="false"></textarea>
     </label>

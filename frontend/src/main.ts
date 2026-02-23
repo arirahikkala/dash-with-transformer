@@ -4,6 +4,7 @@ import { fromByteLevelModel } from "./models";
 import { normalizeCursor } from "./cursor";
 import { buildScene } from "./scene";
 import { renderScene } from "./render";
+import { loadSmolLM } from "./smollm";
 
 // ---------------------------------------------------------------------------
 // Main
@@ -43,6 +44,7 @@ async function main() {
   const hashParams = new URLSearchParams(window.location.hash.slice(1));
   let backendUrl = hashParams.get("backendUrl") ?? "http://localhost:8000";
   let modelCallPrefix = hashParams.get("modelCallPrefix") ?? "";
+  let mode = hashParams.get("mode") ?? "backend";
 
   let model = createModel(backendUrl, modelCallPrefix);
 
@@ -81,14 +83,61 @@ async function main() {
   };
 
   // --- Config inputs ---
+  const modeSelect = document.getElementById(
+    "inference-mode",
+  ) as HTMLSelectElement;
+  const backendUrlLabel = document.getElementById(
+    "backend-url-label",
+  ) as HTMLElement;
+  const webgpuStatusEl = document.getElementById(
+    "webgpu-status",
+  ) as HTMLElement;
   const backendUrlInput = document.getElementById(
     "backend-url",
   ) as HTMLInputElement;
   const modelPrefixInput = document.getElementById(
     "model-prefix",
   ) as HTMLTextAreaElement;
+  const prefixLabel = document.getElementById("prefix-label") as HTMLElement;
+
   backendUrlInput.value = backendUrl;
   modelPrefixInput.value = modelCallPrefix;
+  modeSelect.value = mode;
+
+  // WebGPU model caching
+  let webgpuModel: LanguageModel<readonly number[], number> | null = null;
+  let webgpuLoadPromise: Promise<
+    LanguageModel<readonly number[], number>
+  > | null = null;
+
+  function updateModeUI() {
+    const isWebGPU = mode === "webgpu";
+    backendUrlLabel.style.display = isWebGPU ? "none" : "";
+    prefixLabel.style.display = isWebGPU ? "none" : "";
+    webgpuStatusEl.style.display = isWebGPU ? "" : "none";
+  }
+
+  function updateHash() {
+    const params = new URLSearchParams();
+    if (mode !== "backend") params.set("mode", mode);
+    if (backendUrl !== "http://localhost:8000") {
+      params.set("backendUrl", backendUrl);
+    }
+    if (modelCallPrefix) params.set("modelCallPrefix", modelCallPrefix);
+    window.location.hash = params.toString();
+  }
+
+  async function loadWebGPUModel(): Promise<
+    LanguageModel<readonly number[], number>
+  > {
+    if (!webgpuLoadPromise) {
+      webgpuLoadPromise = loadSmolLM((msg) => {
+        webgpuStatusEl.textContent = msg;
+      });
+    }
+    webgpuModel = await webgpuLoadPromise;
+    return webgpuModel;
+  }
 
   function applyConfigChange() {
     const newUrl = backendUrlInput.value;
@@ -96,23 +145,37 @@ async function main() {
     if (newUrl === backendUrl && newPrefix === modelCallPrefix) return;
     backendUrl = newUrl;
     modelCallPrefix = newPrefix;
+    updateHash();
 
-    const params = new URLSearchParams();
-    if (backendUrl !== "http://localhost:8000") {
-      params.set("backendUrl", backendUrl);
+    if (mode === "backend") {
+      model = createModel(backendUrl, modelCallPrefix);
+      renderController?.abort();
+      renderController = new AbortController();
+      render(renderController.signal);
     }
-    if (modelCallPrefix) params.set("modelCallPrefix", modelCallPrefix);
-    window.location.hash = params.toString();
-
-    model = createModel(backendUrl, modelCallPrefix);
-
-    renderController?.abort();
-    renderController = new AbortController();
-    render(renderController.signal);
   }
 
   backendUrlInput.addEventListener("blur", applyConfigChange);
   modelPrefixInput.addEventListener("blur", applyConfigChange);
+
+  modeSelect.addEventListener("change", async () => {
+    mode = modeSelect.value;
+    updateModeUI();
+    updateHash();
+    if (mode === "webgpu") {
+      const loaded = await loadWebGPUModel();
+      if (mode !== "webgpu") return; // user switched back during loading
+      model = loaded;
+    } else {
+      model = createModel(backendUrl, modelCallPrefix);
+    }
+    cursor = { prefix: [], x: 0.5, y: 0.5 };
+    renderController?.abort();
+    renderController = new AbortController();
+    render(renderController.signal);
+  });
+
+  updateModeUI();
 
   // --- DOM elements ---
   const prefixEl = document.getElementById("prefix-display")!;
@@ -224,6 +287,11 @@ async function main() {
     }
 
     requestAnimationFrame(frame);
+  }
+
+  // Initialize model based on mode
+  if (mode === "webgpu") {
+    model = await loadWebGPUModel();
   }
 
   // Initial render, then start loop
