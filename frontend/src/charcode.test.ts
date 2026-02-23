@@ -14,9 +14,7 @@ async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {
 }
 
 /** Build a char code LanguageModel from a table keyed by comma-joined hex prefix. */
-function makeCharCodeModel(
-  table: Record<string, PlainTokenProb<number>[]>,
-) {
+function makeCharCodeModel(table: Record<string, PlainTokenProb<number>[]>) {
   return adaptModel<readonly number[], number>(async (prefix) => {
     const key = prefix.map((n) => n.toString(16)).join(",");
     return table[key] ?? [];

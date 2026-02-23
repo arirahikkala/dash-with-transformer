@@ -70,10 +70,7 @@ export function createBackendClient(backendUrl: string): BackendClient {
   let pending: PendingRequest[] = [];
   let flushScheduled = false;
 
-  function populateTrieCache(
-    prefix: Uint8Array,
-    trie: TrieResponse,
-  ): void {
+  function populateTrieCache(prefix: Uint8Array, trie: TrieResponse): void {
     for (const [byteStr, childTrie] of Object.entries(trie.children)) {
       const byte = Number(byteStr);
       const childPrefix = new Uint8Array(prefix.length + 1);
