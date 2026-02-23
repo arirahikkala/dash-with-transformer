@@ -7,13 +7,6 @@ choosing the sentence's content by going up or downward, and correcting mistakes
 
 The repo is split into `frontend/` (Vite + TypeScript) and `backend/` (Python + FastAPI).
 
-There are basically two hard things that the front-end does:
-
-- Scene construction (scene.ts): Find the content (tree of prefixes to display) in a window centered on a given cursor position
-- Cursor normalization (cursor.ts): Find the canonical form of a cursor
-
-... and a number of easier things, like rendering a constructed scene, animating the widget, etc.
-
 ## Geometric model
 
 To describe the mapping more precisely:
@@ -25,7 +18,7 @@ An autoregressive language model induces a recursive tiling of the unit square [
     left  edge at x = 1 − P(p)
     y-position determined by cumulative conditional probabilities
 
-Inside each square, the next-token distribution carves out child squares stacked vertically (in the order the model returns them). A child for token c with conditional probability p*c occupies, in the \_parent's* normalised [0,1]×[0,1] coordinate frame:
+Inside each square, the next-token distribution carves out child squares stacked vertically. A child for token c with conditional probability p*c occupies, in the \_parent's* normalised [0,1]×[0,1] coordinate frame:
 
     x ∈ [1 − p_c, 1]
     y ∈ [cumBefore, cumBefore + p_c]
@@ -52,9 +45,9 @@ arbitrarily distantly related nodes might be visible within the window, it has t
 
 `LanguageModel<P, T>` in `types.ts` is the central abstraction for querying next-token distributions. Its signature:
 
-    (prefix, rangeStart, rangeEnd, minSize, specificToken?) → Promise<TokenProb<T>[]>
+    (prefix, rangeStart, rangeEnd, minSize, specificToken?) → AsyncIterable<TokenProb<T>>
 
-Each returned `TokenProb` has a `start` and `end` on the cumulative probability line [0, 1]. These extents depend only on the prefix — the query parameters just control which entries are returned:
+Each returned `TokenProb` has a `start` and `end` on the cumulative probability line [0, 1]. These extents depend only on the prefix — the query parameters just control which entries are returned. Entries may be returned in any order.
 
 - **rangeStart / rangeEnd** — closed range `[rangeStart, rangeEnd]`. Only entries whose extent touches this range are returned. A point query (`start === end`) returns the 1–2 entries at that exact point.
 - **minSize** — only entries with probability ≥ minSize are returned.
