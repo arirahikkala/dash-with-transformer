@@ -1,5 +1,5 @@
 /**
- * Core domain types for the Dasher unit-square model.
+ * Core domain types for the unit-square model.
  */
 
 /**

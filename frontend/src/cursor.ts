@@ -1,5 +1,5 @@
 /**
- * Cursor normalization for the Dasher unit-square model.
+ * Cursor normalization for the unit-square model.
  * See CLAUDE.md for the geometric model and core math concepts.
  */
 

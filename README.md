@@ -1,6 +1,8 @@
-# llm-dasher
+# Dash with Transformer
 
-A [Dasher](https://en.wikipedia.org/wiki/Dasher_(software)) — an information-theory-based text input method powered by a language model. The system maps a language model's probability distribution onto a zoomable 2D space: you glide rightward to write, up/down to choose content, and leftward to correct mistakes.
+An information-theory-based text input method powered by a language model. It displays a widget that maps a language model's probability distribution onto a zoomable 2D space: you glide rightward to write, up/down to choose content, and leftward to correct mistakes.
+
+This project is unaffiliated with [Dasher](https://en.wikipedia.org/wiki/Dasher_(software)), but is obviously very directly inspired by it.
 
 ## Architecture
 
@@ -38,10 +40,10 @@ pip install -e .
 ### Running
 
 ```bash
-llm-dasher --host 0.0.0.0 --port 8000
+dash-with-transformer --host 0.0.0.0 --port 8000
 ```
 
-Or equivalently: `python -m llm_dasher.server`
+Or equivalently: `python -m dash_with_transformer.server`
 
 #### CLI arguments
 

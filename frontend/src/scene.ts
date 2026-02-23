@@ -1,5 +1,5 @@
 /**
- * Scene builder for the Dasher unit-square model.
+ * Scene builder for the unit-square model.
  *
  * Given a language model, a cursor position, and a minimum displayable
  * height, produces a tree of visible squares for rendering.

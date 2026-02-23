@@ -81,11 +81,11 @@ async def predict(req: PredictRequest):
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="llm-dasher backend server")
+    parser = argparse.ArgumentParser(description="dash-with-transformer backend server")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
-    uvicorn.run("llm_dasher.server:app", host=args.host, port=args.port)
+    uvicorn.run("dash_with_transformer.server:app", host=args.host, port=args.port)
 
 
 if __name__ == "__main__":
