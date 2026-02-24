@@ -7,7 +7,12 @@ import {
   raceAsyncIterables,
   racePromises,
 } from "./async-iterables";
-import { first, type LanguageModel, type TokenProb } from "./types";
+import {
+  first,
+  type LanguageModel,
+  type PlainLanguageModel,
+  type TokenProb,
+} from "./types";
 
 // ---------------------------------------------------------------------------
 // UTF-8 helpers
@@ -542,5 +547,86 @@ export function interpolate<P, T>(
     for await (const result of racePromises(remainderPromises)) {
       if (result) yield result;
     }
+  };
+}
+
+// ---------------------------------------------------------------------------
+// UTF-8 validity filtering for byte-level models
+// ---------------------------------------------------------------------------
+
+/**
+ * Return a predicate that accepts exactly the byte values that are legal
+ * as the next byte in a UTF-8 stream whose tail is `prefix`.
+ */
+function legalUtf8NextByte(prefix: Uint8Array): (byte: number) => boolean {
+  const len = prefix.length;
+
+  // Scan backwards (up to 3 bytes) to find the lead byte of the
+  // current (potentially incomplete) character.
+  let leadByte = -1;
+  let consumed = 0; // bytes consumed from lead to end of prefix
+  for (let back = 0; back < Math.min(4, len); back++) {
+    const b = prefix[len - 1 - back];
+    if (b < 0x80) {
+      // ASCII — complete single-byte character; we're at a boundary.
+      break;
+    }
+    if (b >= 0xc0) {
+      // Lead byte found.
+      const seqLen = utf8SeqLength(b);
+      consumed = back + 1;
+      if (seqLen > 0 && consumed < seqLen) {
+        leadByte = b;
+      }
+      break;
+    }
+    // Continuation byte (0x80–0xBF) — keep scanning.
+  }
+
+  if (leadByte === -1) {
+    // At character boundary: legal starts are ASCII + valid lead bytes.
+    return (b: number) =>
+      b <= 0x7f ||
+      (b >= 0xc2 && b <= 0xdf) ||
+      (b >= 0xe0 && b <= 0xef) ||
+      (b >= 0xf0 && b <= 0xf4);
+  }
+
+  // Mid-character: we need a continuation byte.
+  // The first continuation after the lead may have a restricted range.
+  if (consumed === 1) {
+    if (leadByte === 0xe0) return (b: number) => b >= 0xa0 && b <= 0xbf;
+    if (leadByte === 0xed) return (b: number) => b >= 0x80 && b <= 0x9f;
+    if (leadByte === 0xf0) return (b: number) => b >= 0x90 && b <= 0xbf;
+    if (leadByte === 0xf4) return (b: number) => b >= 0x80 && b <= 0x8f;
+  }
+
+  // General continuation byte.
+  return (b: number) => b >= 0x80 && b <= 0xbf;
+}
+
+/**
+ * Wrap a byte-level model to filter out any next-byte predictions that
+ * would violate UTF-8 encoding rules, and renormalise the distribution.
+ */
+export function forceCleanUtf8(
+  model: PlainLanguageModel<Uint8Array, number>,
+): PlainLanguageModel<Uint8Array, number> {
+  return async (prefix: Uint8Array) => {
+    const dist = await model(prefix);
+    const isLegal = legalUtf8NextByte(prefix);
+
+    const filtered = dist.filter(({ token }) => isLegal(token));
+
+    const total = filtered.reduce(
+      (sum, { probability }) => sum + probability,
+      0,
+    );
+    if (total === 0) return [];
+
+    return filtered.map(({ token, probability }) => ({
+      token,
+      probability: probability / total,
+    }));
   };
 }

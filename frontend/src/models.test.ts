@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { fromByteLevelModel, interpolate } from "./models";
-import { adaptModel, type LanguageModel } from "./types";
+import { fromByteLevelModel, forceCleanUtf8, interpolate } from "./models";
+import {
+  adaptModel,
+  type LanguageModel,
+  type PlainLanguageModel,
+  type PlainTokenProb,
+} from "./types";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -883,5 +888,127 @@ describe("interpolate", () => {
     await collect(mixed("", 0, 1, 0));
 
     expect(maxConcurrency).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// forceCleanUtf8
+// ---------------------------------------------------------------------------
+
+describe("forceCleanUtf8", () => {
+  /** Create a mock PlainLanguageModel from a hex-key → dist table. */
+  function makePlainModel(
+    table: Record<string, readonly PlainTokenProb<number>[]>,
+  ): PlainLanguageModel<Uint8Array, number> {
+    return async (prefix: Uint8Array) => {
+      const key = prefixKey(prefix);
+      const result = table[key];
+      if (!result) throw new Error(`Unexpected prefix: "${key}"`);
+      return result;
+    };
+  }
+
+  it("filters out continuation bytes at a character boundary and renormalises", async () => {
+    const model = makePlainModel({
+      "": [
+        { token: 0x61, probability: 0.5 }, // 'a' — legal lead
+        { token: 0x80, probability: 0.25 }, // continuation — illegal at boundary
+        { token: 0xc3, probability: 0.25 }, // 2-byte lead — legal
+      ],
+    });
+    const dist = await forceCleanUtf8(model)(new Uint8Array([]));
+
+    expect(dist).toHaveLength(2);
+    expect(dist[0].token).toBe(0x61);
+    expect(dist[1].token).toBe(0xc3);
+    expect(dist[0].probability).toBeCloseTo(2 / 3);
+    expect(dist[1].probability).toBeCloseTo(1 / 3);
+  });
+
+  it("filters out lead bytes when a continuation byte is expected", async () => {
+    // Prefix [0xC3] → mid-2-byte-sequence, need one continuation
+    const model = makePlainModel({
+      c3: [
+        { token: 0xa9, probability: 0.5 }, // valid continuation
+        { token: 0x61, probability: 0.25 }, // ASCII — illegal here
+        { token: 0xc3, probability: 0.25 }, // lead — illegal here
+      ],
+    });
+    const dist = await forceCleanUtf8(model)(new Uint8Array([0xc3]));
+
+    expect(dist).toHaveLength(1);
+    expect(dist[0].token).toBe(0xa9);
+    expect(dist[0].probability).toBeCloseTo(1.0);
+  });
+
+  it("enforces restricted range after E0 (rejects overlong encodings)", async () => {
+    const model = makePlainModel({
+      e0: [
+        { token: 0x80, probability: 0.5 }, // < 0xA0 → overlong
+        { token: 0xa0, probability: 0.5 }, // legal
+      ],
+    });
+    const dist = await forceCleanUtf8(model)(new Uint8Array([0xe0]));
+
+    expect(dist).toHaveLength(1);
+    expect(dist[0].token).toBe(0xa0);
+    expect(dist[0].probability).toBeCloseTo(1.0);
+  });
+
+  it("enforces restricted range after F0 and F4", async () => {
+    // After F0: first continuation must be 0x90–0xBF
+    const f0Model = makePlainModel({
+      f0: [
+        { token: 0x80, probability: 0.5 }, // too low
+        { token: 0x90, probability: 0.5 }, // legal
+      ],
+    });
+    const f0Dist = await forceCleanUtf8(f0Model)(new Uint8Array([0xf0]));
+    expect(f0Dist).toHaveLength(1);
+    expect(f0Dist[0].token).toBe(0x90);
+
+    // After F4: first continuation must be 0x80–0x8F
+    const f4Model = makePlainModel({
+      f4: [
+        { token: 0x80, probability: 0.5 }, // legal
+        { token: 0x90, probability: 0.5 }, // beyond U+10FFFF
+      ],
+    });
+    const f4Dist = await forceCleanUtf8(f4Model)(new Uint8Array([0xf4]));
+    expect(f4Dist).toHaveLength(1);
+    expect(f4Dist[0].token).toBe(0x80);
+  });
+
+  it("passes through an already-clean distribution unchanged", async () => {
+    const model = makePlainModel({
+      "": [
+        { token: 0x61, probability: 0.5 },
+        { token: 0x62, probability: 0.5 },
+      ],
+    });
+    const dist = await forceCleanUtf8(model)(new Uint8Array([]));
+
+    expect(dist).toHaveLength(2);
+    expect(dist[0]).toEqual({ token: 0x61, probability: 0.5 });
+    expect(dist[1]).toEqual({ token: 0x62, probability: 0.5 });
+  });
+
+  it("allows generic continuation bytes in later positions of a multi-byte sequence", async () => {
+    // Prefix [0xE4, 0xB8] — 3-byte sequence, need one more continuation
+    const model = makePlainModel({
+      e4b8: [
+        { token: 0x80, probability: 0.25 },
+        { token: 0xad, probability: 0.25 },
+        { token: 0xbf, probability: 0.25 },
+        { token: 0x61, probability: 0.25 }, // illegal: not a continuation
+      ],
+    });
+    const dist = await forceCleanUtf8(model)(new Uint8Array([0xe4, 0xb8]));
+
+    expect(dist).toHaveLength(3);
+    expect(dist.map((d) => d.token)).toEqual([0x80, 0xad, 0xbf]);
+    for (const d of dist) {
+      expect(d.probability).toBeCloseTo(1 / 3);
+    }
   });
 });
