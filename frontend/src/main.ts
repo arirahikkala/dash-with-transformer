@@ -174,7 +174,7 @@ async function main() {
     } else {
       model = createModel(backendUrl, modelCallPrefix);
     }
-    cursor = { prefix: [], x: 0.5, y: 0.5 };
+    cursor = { prefix: cursor.prefix, x: 0.0, y: 0.5 };
     renderController?.abort();
     renderController = new AbortController();
     render(renderController.signal);
