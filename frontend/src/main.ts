@@ -1,11 +1,11 @@
-import type { Cursor, LanguageModel, PlainTokenProb } from "./types";
+import type { Cursor, LanguageModel } from "./types";
 import { createBackendClient } from "./backend";
 import { forceCleanUtf8, fromByteLevelModel, trieCache } from "./models";
 import { normalizeCursor } from "./cursor";
 import { buildScene } from "./scene";
 import { renderScene } from "./render";
 import { loadSmolLM } from "./smollm";
-import { loadModel, softmax } from "./lstm";
+import { createCachedLSTMPredictor } from "./lstm";
 
 function prefixToString(prefix: readonly number[]): string {
   return String.fromCodePoint(...prefix);
@@ -121,28 +121,15 @@ async function main() {
   > {
     if (!lstmLoadPromise) {
       lstmLoadPromise = (async () => {
-        webgpuStatusEl.textContent = "Loading LSTM model\u2026";
         const base = import.meta.env.BASE_URL.replace(/\/$/, "");
-        const lstm = await loadModel(base, true);
-        webgpuStatusEl.textContent = "Ready!";
-
-        const plainModel = async (
-          prefix: Uint8Array,
-        ): Promise<readonly PlainTokenProb<number>[]> => {
-          lstm.reset();
-          const logits = lstm.forward(prefix);
-          const probs = softmax(logits);
-          const result: PlainTokenProb<number>[] = [];
-          for (let i = 0; i < probs.length; i++) {
-            if (probs[i] > 0) {
-              result.push({ token: i, probability: probs[i] });
-            }
-          }
-          return result;
-        };
-
-        const cleanModel = trieCache(forceCleanUtf8(plainModel));
-
+        const { predict } = await createCachedLSTMPredictor(
+          base,
+          true,
+          (msg) => {
+            webgpuStatusEl.textContent = msg;
+          },
+        );
+        const cleanModel = trieCache(forceCleanUtf8(predict));
         return fromByteLevelModel(async (prefix: Uint8Array) => {
           const dist = await cleanModel(prefix);
           const result: number[] = new Array(256).fill(0);

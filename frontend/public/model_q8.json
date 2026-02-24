@@ -1,0 +1,107 @@
+{
+  "config": {
+    "embed_dim": 128,
+    "hidden_dim": 512,
+    "num_layers": 2,
+    "vocab_size": 256
+  },
+  "weights": [
+    {
+      "name": "embed.weight",
+      "shape": [
+        256,
+        128
+      ],
+      "dtype": "int8",
+      "offset": 0,
+      "length": 32768,
+      "scale": 0.04375764727592468
+    },
+    {
+      "name": "lstm.weight_ih_l0",
+      "shape": [
+        2048,
+        128
+      ],
+      "dtype": "int8",
+      "offset": 32768,
+      "length": 262144,
+      "scale": 0.013637472875416279
+    },
+    {
+      "name": "lstm.weight_hh_l0",
+      "shape": [
+        2048,
+        512
+      ],
+      "dtype": "int8",
+      "offset": 294912,
+      "length": 1048576,
+      "scale": 0.03914794698357582
+    },
+    {
+      "name": "lstm.bias_l0",
+      "shape": [
+        2048
+      ],
+      "dtype": "int8",
+      "offset": 1343488,
+      "length": 2048,
+      "scale": 0.012720216996967793
+    },
+    {
+      "name": "lstm.weight_ih_l1",
+      "shape": [
+        2048,
+        512
+      ],
+      "dtype": "int8",
+      "offset": 1345536,
+      "length": 1048576,
+      "scale": 0.03094618022441864
+    },
+    {
+      "name": "lstm.weight_hh_l1",
+      "shape": [
+        2048,
+        512
+      ],
+      "dtype": "int8",
+      "offset": 2394112,
+      "length": 1048576,
+      "scale": 0.04815926030278206
+    },
+    {
+      "name": "lstm.bias_l1",
+      "shape": [
+        2048
+      ],
+      "dtype": "int8",
+      "offset": 3442688,
+      "length": 2048,
+      "scale": 0.007574975490570068
+    },
+    {
+      "name": "proj.weight",
+      "shape": [
+        256,
+        512
+      ],
+      "dtype": "int8",
+      "offset": 3444736,
+      "length": 131072,
+      "scale": 0.035284046083688736
+    },
+    {
+      "name": "proj.bias",
+      "shape": [
+        256
+      ],
+      "dtype": "int8",
+      "offset": 3575808,
+      "length": 256,
+      "scale": 0.005154147744178772
+    }
+  ],
+  "quantized": true
+}
