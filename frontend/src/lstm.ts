@@ -1,6 +1,7 @@
 /**
- * Tiny byte-level LSTM language model — pure TypeScript, zero dependencies.
- * Runs entirely on the CPU via typed arrays.
+ * Byte-level LSTM language model — WASM SIMD accelerated, int8 quantized.
+ * All matrix-vector products run in WebAssembly with SIMD128 intrinsics.
+ * Weight matrices stay int8 in WASM linear memory (no dequantize-at-load).
  */
 
 // ---------- Types ----------
@@ -11,7 +12,7 @@ interface WeightEntry {
   dtype: "float32" | "int8";
   offset: number;
   length: number;
-  scale?: number; // only for int8
+  scale?: number;
 }
 
 interface ModelManifest {
@@ -30,33 +31,37 @@ export interface LSTMState {
   c: Float32Array[]; // one per layer
 }
 
-// ---------- Matrix math ----------
+// ---------- WASM ----------
 
-/** Matrix-vector multiply: out = A @ x. A is (rows, cols), x is (cols,). */
-function matvec(
-  out: Float32Array,
-  A: Float32Array,
-  x: Float32Array,
-  rows: number,
-  cols: number,
-): void {
-  for (let i = 0; i < rows; i++) {
-    let sum = 0;
-    const base = i * cols;
-    for (let j = 0; j < cols; j++) {
-      sum += A[base + j] * x[j];
-    }
-    out[i] = sum;
-  }
+interface WasmExports {
+  matvec_fused_i8(
+    out: number,
+    w_ih: number,
+    input: number,
+    cols_ih: number,
+    scale_ih: number,
+    w_hh: number,
+    h: number,
+    cols_hh: number,
+    scale_hh: number,
+    bias: number,
+    rows: number,
+  ): void;
+  matvec_i8(
+    out: number,
+    A: number,
+    x: number,
+    rows: number,
+    cols: number,
+    scale: number,
+  ): void;
 }
 
-/** Dequantize int8 → float32 inline. */
-function dequantize(int8Arr: Int8Array, scale: number): Float32Array {
-  const out = new Float32Array(int8Arr.length);
-  for (let i = 0; i < int8Arr.length; i++) {
-    out[i] = int8Arr[i] * scale;
-  }
-  return out;
+/** Byte offset where our data starts (the linker reserves [0, WASM_STACK) for stack). */
+const WASM_STACK = 4096;
+
+function align16(n: number): number {
+  return (n + 15) & ~15;
 }
 
 // ---------- Activations ----------
@@ -65,101 +70,266 @@ function sigmoid(x: number): number {
   return 1 / (1 + Math.exp(-x));
 }
 
-// ---------- Weight loading ----------
-
-function loadWeight(entry: WeightEntry, buffer: ArrayBuffer): Float32Array {
-  if (entry.dtype === "float32") {
-    return new Float32Array(buffer, entry.offset, entry.length / 4);
-  } else {
-    const int8 = new Int8Array(buffer, entry.offset, entry.length);
-    return dequantize(int8, entry.scale!);
-  }
-}
-
-function getWeight(
-  weights: Map<string, Float32Array>,
-  name: string,
-): Float32Array {
-  const w = weights.get(name);
-  if (!w) throw new Error(`Weight not found: ${name}`);
-  return w;
-}
-
 // ---------- Model ----------
 
 export class ByteLSTM {
+  private wasm: WasmExports;
   private config: ModelManifest["config"];
-  private embed: Float32Array;
+
+  // Embedding table (float32 in WASM memory, dequantized at load)
+  private embedView: Float32Array;
+
+  // Per-layer weight metadata (byte offsets into WASM memory + scales)
   private layers: {
-    weight_ih: Float32Array;
-    weight_hh: Float32Array;
-    bias: Float32Array;
+    wIhPtr: number;
+    scaleIh: number;
+    inputSize: number;
+    wHhPtr: number;
+    scaleHh: number;
+    biasPtr: number;
   }[];
-  private projWeight: Float32Array;
-  private projBias: Float32Array;
-  private state: LSTMState;
 
-  // Scratch buffers (pre-allocated to avoid GC pressure)
-  private gates_ih: Float32Array;
-  private gates_hh: Float32Array;
-  private gates: Float32Array;
+  // Output projection
+  private projPtr: number;
+  private projScale: number;
+  private projBiasView: Float32Array;
 
-  constructor(manifest: ModelManifest, buffer: ArrayBuffer) {
+  // Scratch + state (all in WASM linear memory)
+  private inputPtr: number;
+  private inputView: Float32Array;
+  private gatesPtr: number;
+  private gatesView: Float32Array;
+  private hPtrs: number[];
+  private hViews: Float32Array[];
+  private cViews: Float32Array[];
+  private logitsPtr: number;
+  private logitsView: Float32Array;
+
+  constructor(
+    manifest: ModelManifest,
+    modelBuffer: ArrayBuffer,
+    wasmModule: WebAssembly.Module,
+  ) {
     this.config = manifest.config;
-    const { hidden_dim, num_layers } = this.config;
+    const { embed_dim, hidden_dim: H, num_layers, vocab_size } = this.config;
 
-    // Load all weights
-    const weights = new Map<string, Float32Array>();
-    for (const entry of manifest.weights) {
-      weights.set(entry.name, loadWeight(entry, buffer));
-    }
+    // ---- Compute memory layout (bump allocator, 16-byte aligned) ----
 
-    this.embed = getWeight(weights, "embed.weight");
-    this.layers = [];
-    for (let l = 0; l < num_layers; l++) {
-      this.layers.push({
-        weight_ih: getWeight(weights, `lstm.weight_ih_l${l}`),
-        weight_hh: getWeight(weights, `lstm.weight_hh_l${l}`),
-        bias: getWeight(weights, `lstm.bias_l${l}`),
-      });
-    }
-    this.projWeight = getWeight(weights, "proj.weight");
-    this.projBias = getWeight(weights, "proj.bias");
-
-    // Init state
-    this.state = {
-      h: Array.from({ length: num_layers }, () => new Float32Array(hidden_dim)),
-      c: Array.from({ length: num_layers }, () => new Float32Array(hidden_dim)),
+    let off = WASM_STACK;
+    const alloc = (bytes: number) => {
+      off = align16(off);
+      const ptr = off;
+      off += bytes;
+      return ptr;
     };
 
-    // Scratch buffers
-    this.gates_ih = new Float32Array(4 * hidden_dim);
-    this.gates_hh = new Float32Array(4 * hidden_dim);
-    this.gates = new Float32Array(4 * hidden_dim);
+    // Embedding table: float32
+    const embedPtr = alloc(vocab_size * embed_dim * 4);
+
+    // Per-layer weights
+    const layerLayout: typeof this.layers = [];
+    for (let l = 0; l < num_layers; l++) {
+      const inputSize = l === 0 ? embed_dim : H;
+      layerLayout.push({
+        wIhPtr: alloc(4 * H * inputSize), // int8
+        wHhPtr: alloc(4 * H * H), // int8
+        biasPtr: alloc(4 * H * 4), // float32
+        scaleIh: 0,
+        scaleHh: 0,
+        inputSize,
+      });
+    }
+
+    // Output projection
+    const projPtr = alloc(vocab_size * H); // int8
+    const projBiasPtr = alloc(vocab_size * 4); // float32
+
+    // Scratch vectors
+    const inputVecPtr = alloc(Math.max(embed_dim, H) * 4);
+    const gatesPtr = alloc(4 * H * 4);
+
+    // State vectors
+    const hPtrs: number[] = [];
+    const cPtrs: number[] = [];
+    for (let l = 0; l < num_layers; l++) {
+      hPtrs.push(alloc(H * 4));
+      cPtrs.push(alloc(H * 4));
+    }
+    const logitsPtr = alloc(vocab_size * 4);
+
+    // ---- Create WASM memory + instantiate ----
+
+    const pages = Math.ceil(off / 65536);
+    const memory = new WebAssembly.Memory({ initial: pages });
+    const instance = new WebAssembly.Instance(wasmModule, {
+      env: { memory },
+    });
+    this.wasm = instance.exports as unknown as WasmExports;
+    const buf = memory.buffer;
+
+    // ---- Copy weights from model file into WASM memory ----
+
+    const getEntry = (name: string): WeightEntry => {
+      const e = manifest.weights.find((w) => w.name === name);
+      if (!e) throw new Error(`Weight not found: ${name}`);
+      return e;
+    };
+
+    // Copy raw int8 bytes into WASM memory, return scale
+    const copyI8 = (ptr: number, entry: WeightEntry): number => {
+      new Int8Array(buf, ptr, entry.length).set(
+        new Int8Array(modelBuffer, entry.offset, entry.length),
+      );
+      return entry.scale!;
+    };
+
+    // Dequantize (int8→float32 or copy float32) into WASM memory
+    const dequantInto = (
+      ptr: number,
+      entry: WeightEntry,
+      count: number,
+    ): Float32Array => {
+      const dst = new Float32Array(buf, ptr, count);
+      if (entry.dtype === "int8") {
+        const src = new Int8Array(modelBuffer, entry.offset, entry.length);
+        const s = entry.scale!;
+        for (let i = 0; i < count; i++) dst[i] = src[i] * s;
+      } else {
+        dst.set(new Float32Array(modelBuffer, entry.offset, count));
+      }
+      return dst;
+    };
+
+    // Embedding (dequantize to float32 — small table, accessed per-byte)
+    this.embedView = dequantInto(
+      embedPtr,
+      getEntry("embed.weight"),
+      vocab_size * embed_dim,
+    );
+
+    // Layer weights: int8 matrices stay int8, biases dequantized to float32
+    this.layers = layerLayout;
+    for (let l = 0; l < num_layers; l++) {
+      this.layers[l].scaleIh = copyI8(
+        this.layers[l].wIhPtr,
+        getEntry(`lstm.weight_ih_l${l}`),
+      );
+      this.layers[l].scaleHh = copyI8(
+        this.layers[l].wHhPtr,
+        getEntry(`lstm.weight_hh_l${l}`),
+      );
+      dequantInto(this.layers[l].biasPtr, getEntry(`lstm.bias_l${l}`), 4 * H);
+    }
+
+    // Projection
+    this.projPtr = projPtr;
+    this.projScale = copyI8(projPtr, getEntry("proj.weight"));
+    this.projBiasView = dequantInto(
+      projBiasPtr,
+      getEntry("proj.bias"),
+      vocab_size,
+    );
+
+    // ---- Create typed array views for JS-side access ----
+
+    this.inputPtr = inputVecPtr;
+    this.inputView = new Float32Array(buf, inputVecPtr, Math.max(embed_dim, H));
+    this.gatesPtr = gatesPtr;
+    this.gatesView = new Float32Array(buf, gatesPtr, 4 * H);
+    this.hPtrs = hPtrs;
+    this.hViews = hPtrs.map((p) => new Float32Array(buf, p, H));
+    this.cViews = cPtrs.map((p) => new Float32Array(buf, p, H));
+    this.logitsPtr = logitsPtr;
+    this.logitsView = new Float32Array(buf, logitsPtr, vocab_size);
   }
 
   /** Reset LSTM hidden state (call between unrelated sequences). */
   reset(): void {
-    for (let l = 0; l < this.config.num_layers; l++) {
-      this.state.h[l].fill(0);
-      this.state.c[l].fill(0);
-    }
+    for (const v of this.hViews) v.fill(0);
+    for (const v of this.cViews) v.fill(0);
   }
 
   /** Clone the current hidden state. */
   saveState(): LSTMState {
     return {
-      h: this.state.h.map((a) => new Float32Array(a)),
-      c: this.state.c.map((a) => new Float32Array(a)),
+      h: this.hViews.map((v) => new Float32Array(v)),
+      c: this.cViews.map((v) => new Float32Array(v)),
     };
   }
 
   /** Restore hidden state from a previous snapshot. */
   restoreState(state: LSTMState): void {
     for (let l = 0; l < this.config.num_layers; l++) {
-      this.state.h[l].set(state.h[l]);
-      this.state.c[l].set(state.c[l]);
+      this.hViews[l].set(state.h[l]);
+      this.cViews[l].set(state.c[l]);
     }
+  }
+
+  /** Feed one byte through LSTM layers (no output projection). */
+  step(byte: number): void {
+    const { embed_dim, hidden_dim: H, num_layers } = this.config;
+
+    // Embedding lookup → input vector in WASM memory
+    const embOff = byte * embed_dim;
+    for (let i = 0; i < embed_dim; i++)
+      this.inputView[i] = this.embedView[embOff + i];
+
+    // LSTM layers
+    for (let l = 0; l < num_layers; l++) {
+      const layer = this.layers[l];
+      const inPtr = l === 0 ? this.inputPtr : this.hPtrs[l - 1];
+
+      // Fused gate computation (WASM SIMD):
+      //   gates = W_ih @ input * scale_ih + W_hh @ h * scale_hh + bias
+      this.wasm.matvec_fused_i8(
+        this.gatesPtr,
+        layer.wIhPtr,
+        inPtr,
+        layer.inputSize,
+        layer.scaleIh,
+        layer.wHhPtr,
+        this.hPtrs[l],
+        H,
+        layer.scaleHh,
+        layer.biasPtr,
+        4 * H,
+      );
+
+      // Apply gate activations and update cell/hidden state
+      const g = this.gatesView;
+      const h = this.hViews[l];
+      const c = this.cViews[l];
+      for (let i = 0; i < H; i++) {
+        const ig = sigmoid(g[i]); // input gate
+        const fg = sigmoid(g[H + i]); // forget gate
+        const gg = Math.tanh(g[2 * H + i]); // cell gate
+        const og = sigmoid(g[3 * H + i]); // output gate
+
+        c[i] = fg * c[i] + ig * gg;
+        h[i] = og * Math.tanh(c[i]);
+      }
+    }
+  }
+
+  /** Project current hidden state to logits (returns a new Float32Array). */
+  project(): Float32Array {
+    const { hidden_dim: H, num_layers, vocab_size } = this.config;
+
+    // Output projection (WASM SIMD): logits_raw = W_proj @ h * scale
+    this.wasm.matvec_i8(
+      this.logitsPtr,
+      this.projPtr,
+      this.hPtrs[num_layers - 1],
+      vocab_size,
+      H,
+      this.projScale,
+    );
+
+    // Add bias (small — 256 elements)
+    const logits = new Float32Array(vocab_size);
+    for (let i = 0; i < vocab_size; i++)
+      logits[i] = this.logitsView[i] + this.projBiasView[i];
+    return logits;
   }
 
   /**
@@ -167,85 +337,17 @@ export class ByteLSTM {
    * The returned Float32Array has 256 entries.
    */
   next(byte: number): Float32Array {
-    const { embed_dim, hidden_dim, num_layers, vocab_size } = this.config;
-    const H = hidden_dim;
-
-    // Embedding lookup
-    let input: Float32Array = new Float32Array(embed_dim);
-    const embOffset = byte * embed_dim;
-    for (let i = 0; i < embed_dim; i++) {
-      input[i] = this.embed[embOffset + i];
-    }
-
-    // LSTM layers
-    for (let l = 0; l < num_layers; l++) {
-      const { weight_ih, weight_hh, bias } = this.layers[l];
-      const h_prev = this.state.h[l];
-      const c_prev = this.state.c[l];
-      const input_size = l === 0 ? embed_dim : hidden_dim;
-
-      // gates = W_ih @ input + W_hh @ h_prev + bias
-      matvec(this.gates_ih, weight_ih, input, 4 * H, input_size);
-      matvec(this.gates_hh, weight_hh, h_prev, 4 * H, H);
-
-      for (let i = 0; i < 4 * H; i++) {
-        this.gates[i] = this.gates_ih[i] + this.gates_hh[i] + bias[i];
-      }
-
-      // Split gates: PyTorch order is [i, f, g, o]
-      const h_new = this.state.h[l];
-      const c_new = this.state.c[l];
-      for (let i = 0; i < H; i++) {
-        const ig = sigmoid(this.gates[i]); // input gate
-        const fg = sigmoid(this.gates[H + i]); // forget gate
-        const gg = Math.tanh(this.gates[2 * H + i]); // cell gate
-        const og = sigmoid(this.gates[3 * H + i]); // output gate
-
-        c_new[i] = fg * c_prev[i] + ig * gg;
-        h_new[i] = og * Math.tanh(c_new[i]);
-      }
-
-      // Output of this layer is input to next
-      input = h_new;
-    }
-
-    // Output projection: logits = W_proj @ h + b_proj
-    const logits = new Float32Array(vocab_size);
-    matvec(
-      logits,
-      this.projWeight,
-      this.state.h[num_layers - 1],
-      vocab_size,
-      H,
-    );
-    for (let i = 0; i < vocab_size; i++) {
-      logits[i] += this.projBias[i];
-    }
-
-    return logits;
+    this.step(byte);
+    return this.project();
   }
 
   /**
    * Feed a sequence of bytes, return logits after the last byte.
-   * For an empty sequence, returns logits projected from the current hidden state.
+   * Uses step() internally to avoid redundant intermediate projections.
    */
   forward(bytes: Uint8Array | number[]): Float32Array {
-    for (const b of bytes) {
-      this.next(b);
-    }
-    const { hidden_dim: H, num_layers, vocab_size } = this.config;
-    const logits = new Float32Array(vocab_size);
-    matvec(
-      logits,
-      this.projWeight,
-      this.state.h[num_layers - 1],
-      vocab_size,
-      H,
-    );
-    for (let i = 0; i < vocab_size; i++) {
-      logits[i] += this.projBias[i];
-    }
-    return logits;
+    for (const b of bytes) this.step(b);
+    return this.project();
   }
 }
 
@@ -288,21 +390,19 @@ export function sample(probs: Float32Array, temperature: number = 1.0): number {
 
 /**
  * Load a ByteLSTM model from a URL prefix.
- * Expects `${urlPrefix}/model.json` and `${urlPrefix}/model.bin`
- * (or model_q8.json / model_q8.bin for quantized).
+ * Expects model_q8.json, model_q8.bin, and matvec.wasm at the prefix.
  */
-export async function loadModel(
-  urlPrefix: string,
-  quantized: boolean = false,
-): Promise<ByteLSTM> {
-  const suffix = quantized ? "_q8" : "";
-  const [manifestResp, binResp] = await Promise.all([
-    fetch(`${urlPrefix}/model${suffix}.json`),
-    fetch(`${urlPrefix}/model${suffix}.bin`),
+export async function loadModel(urlPrefix: string): Promise<ByteLSTM> {
+  const [manifest, buffer, wasmModule] = await Promise.all([
+    fetch(`${urlPrefix}/model_q8.json`).then((r) =>
+      r.json(),
+    ) as Promise<ModelManifest>,
+    fetch(`${urlPrefix}/model_q8.bin`).then((r) => r.arrayBuffer()),
+    fetch(`${urlPrefix}/matvec.wasm`)
+      .then((r) => r.arrayBuffer())
+      .then((b) => WebAssembly.compile(b)),
   ]);
-  const manifest: ModelManifest = await manifestResp.json();
-  const buffer = await binResp.arrayBuffer();
-  return new ByteLSTM(manifest, buffer);
+  return new ByteLSTM(manifest, buffer, wasmModule);
 }
 
 // ---------- LRU State Cache ----------
@@ -379,7 +479,6 @@ class LSTMWorkerPool {
 
   static async create(
     modelUrl: string,
-    quantized: boolean,
     numWorkers: number,
     onProgress?: (msg: string) => void,
   ): Promise<LSTMWorkerPool> {
@@ -413,7 +512,7 @@ class LSTMWorkerPool {
         worker.addEventListener("error", onError);
       });
 
-      worker.postMessage({ type: "init", modelUrl, quantized });
+      worker.postMessage({ type: "init", modelUrl });
       pool.workers.push(worker);
       readyPromises.push(readyPromise);
     }
@@ -505,7 +604,6 @@ import type { PlainTokenProb } from "./types";
 
 export async function createCachedLSTMPredictor(
   urlPrefix: string,
-  quantized: boolean,
   onProgress?: (msg: string) => void,
 ): Promise<{
   predict: (prefix: Uint8Array) => Promise<readonly PlainTokenProb<number>[]>;
@@ -518,12 +616,7 @@ export async function createCachedLSTMPredictor(
     4,
   );
 
-  const pool = await LSTMWorkerPool.create(
-    urlPrefix,
-    quantized,
-    numWorkers,
-    onProgress,
-  );
+  const pool = await LSTMWorkerPool.create(urlPrefix, numWorkers, onProgress);
 
   const cache = new LSTMStateCache();
 

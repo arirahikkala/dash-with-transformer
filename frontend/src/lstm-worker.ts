@@ -1,14 +1,14 @@
 /**
  * Web worker entry point for LSTM inference.
- * Each worker loads its own copy of the model and handles predict requests
- * with state save/restore, returning intermediate states for caching.
+ * Each worker loads its own copy of the model (with its own WASM instance)
+ * and handles predict requests with state save/restore.
  */
 import { ByteLSTM, loadModel, type LSTMState } from "./lstm";
 
 let model: ByteLSTM | null = null;
 
 export type WorkerRequest =
-  | { type: "init"; modelUrl: string; quantized: boolean }
+  | { type: "init"; modelUrl: string }
   | { type: "predict"; id: number; state: LSTMState | null; bytes: number[] };
 
 export type WorkerResponse =
@@ -21,7 +21,7 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
 
   if (msg.type === "init") {
     try {
-      model = await loadModel(msg.modelUrl, msg.quantized);
+      model = await loadModel(msg.modelUrl);
       (self as unknown as Worker).postMessage({
         type: "ready",
       } satisfies WorkerResponse);
@@ -44,12 +44,12 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
 
       const states: LSTMState[] = [];
       for (const b of msg.bytes) {
-        model.next(b);
+        model.step(b);
         states.push(model.saveState());
       }
 
       // Project final logits
-      const logits = model.forward([]);
+      const logits = model.project();
 
       (self as unknown as Worker).postMessage({
         type: "result",

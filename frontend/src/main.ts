@@ -122,13 +122,9 @@ async function main() {
     if (!lstmLoadPromise) {
       lstmLoadPromise = (async () => {
         const base = import.meta.env.BASE_URL.replace(/\/$/, "");
-        const { predict } = await createCachedLSTMPredictor(
-          base,
-          true,
-          (msg) => {
-            webgpuStatusEl.textContent = msg;
-          },
-        );
+        const { predict } = await createCachedLSTMPredictor(base, (msg) => {
+          webgpuStatusEl.textContent = msg;
+        });
         const cleanModel = trieCache(forceCleanUtf8(predict));
         return fromByteLevelModel(async (prefix: Uint8Array) => {
           const dist = await cleanModel(prefix);
