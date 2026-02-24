@@ -4,6 +4,8 @@
  * - Automatic request batching via microtask scheduling
  */
 
+import { showErrorToast } from "./toast";
+
 // ---------------------------------------------------------------------------
 // Request compression
 // ---------------------------------------------------------------------------
@@ -123,6 +125,7 @@ export function createBackendClient(backendUrl: string): BackendClient {
       }
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
+      showErrorToast(error.message);
       for (const req of batch) {
         req.node.dist = undefined; // clear so the prefix can be retried
         req.reject(error);
