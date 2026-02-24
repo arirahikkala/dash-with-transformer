@@ -1,10 +1,11 @@
-import type { Cursor, LanguageModel } from "./types";
+import type { Cursor, LanguageModel, PlainTokenProb } from "./types";
 import { createBackendClient } from "./backend";
-import { fromByteLevelModel } from "./models";
+import { forceCleanUtf8, fromByteLevelModel, trieCache } from "./models";
 import { normalizeCursor } from "./cursor";
 import { buildScene } from "./scene";
 import { renderScene } from "./render";
 import { loadSmolLM } from "./smollm";
+import { loadModel, softmax } from "./lstm";
 
 function prefixToString(prefix: readonly number[]): string {
   return String.fromCodePoint(...prefix);
@@ -80,11 +81,17 @@ async function main() {
     LanguageModel<readonly number[], number>
   > | null = null;
 
+  // LSTM model caching
+  let lstmModel: LanguageModel<readonly number[], number> | null = null;
+  let lstmLoadPromise: Promise<
+    LanguageModel<readonly number[], number>
+  > | null = null;
+
   function updateModeUI() {
-    const isWebGPU = mode === "webgpu";
-    backendUrlLabel.style.display = isWebGPU ? "none" : "";
-    prefixLabel.style.display = isWebGPU ? "none" : "";
-    webgpuStatusEl.style.display = isWebGPU ? "" : "none";
+    const isBackend = mode === "backend";
+    backendUrlLabel.style.display = isBackend ? "" : "none";
+    prefixLabel.style.display = isBackend ? "" : "none";
+    webgpuStatusEl.style.display = isBackend ? "none" : "";
   }
 
   function updateHash() {
@@ -107,6 +114,47 @@ async function main() {
     }
     webgpuModel = await webgpuLoadPromise;
     return webgpuModel;
+  }
+
+  async function loadLSTMModel(): Promise<
+    LanguageModel<readonly number[], number>
+  > {
+    if (!lstmLoadPromise) {
+      lstmLoadPromise = (async () => {
+        webgpuStatusEl.textContent = "Loading LSTM model\u2026";
+        const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+        const lstm = await loadModel(base, true);
+        webgpuStatusEl.textContent = "Ready!";
+
+        const plainModel = async (
+          prefix: Uint8Array,
+        ): Promise<readonly PlainTokenProb<number>[]> => {
+          lstm.reset();
+          const logits = lstm.forward(prefix);
+          const probs = softmax(logits);
+          const result: PlainTokenProb<number>[] = [];
+          for (let i = 0; i < probs.length; i++) {
+            if (probs[i] > 0) {
+              result.push({ token: i, probability: probs[i] });
+            }
+          }
+          return result;
+        };
+
+        const cleanModel = trieCache(forceCleanUtf8(plainModel));
+
+        return fromByteLevelModel(async (prefix: Uint8Array) => {
+          const dist = await cleanModel(prefix);
+          const result: number[] = new Array(256).fill(0);
+          for (const { token, probability } of dist) {
+            result[token] = probability;
+          }
+          return result;
+        });
+      })();
+    }
+    lstmModel = await lstmLoadPromise;
+    return lstmModel;
   }
 
   function applyConfigChange() {
@@ -134,7 +182,11 @@ async function main() {
     updateHash();
     if (mode === "webgpu") {
       const loaded = await loadWebGPUModel();
-      if (mode !== "webgpu") return; // user switched back during loading
+      if (mode !== "webgpu") return;
+      model = loaded;
+    } else if (mode === "lstm") {
+      const loaded = await loadLSTMModel();
+      if (mode !== "lstm") return;
       model = loaded;
     } else {
       model = createModel(backendUrl, modelCallPrefix);
@@ -261,6 +313,8 @@ async function main() {
   // Initialize model based on mode
   if (mode === "webgpu") {
     model = await loadWebGPUModel();
+  } else if (mode === "lstm") {
+    model = await loadLSTMModel();
   }
 
   // Initial render, then start loop

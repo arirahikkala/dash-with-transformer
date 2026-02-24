@@ -11,6 +11,7 @@ import {
   first,
   type LanguageModel,
   type PlainLanguageModel,
+  type PlainTokenProb,
   type TokenProb,
 } from "./types";
 
@@ -603,6 +604,30 @@ function legalUtf8NextByte(prefix: Uint8Array): (byte: number) => boolean {
 
   // General continuation byte.
   return (b: number) => b >= 0x80 && b <= 0xbf;
+}
+
+/**
+ * Byte-trie cache for a PlainLanguageModel over byte prefixes.
+ * Each unique prefix is computed at most once; subsequent queries
+ * return the cached result.
+ */
+export function trieCache(
+  model: PlainLanguageModel<Uint8Array, number>,
+): PlainLanguageModel<Uint8Array, number> {
+  type Node = {
+    children: (Node | undefined)[];
+    result?: readonly PlainTokenProb<number>[];
+  };
+  const root: Node = { children: [] };
+
+  return async (prefix: Uint8Array) => {
+    let node = root;
+    for (let i = 0; i < prefix.length; i++) {
+      const b = prefix[i];
+      node = node.children[b] ??= { children: [] };
+    }
+    return (node.result ??= await model(prefix));
+  };
 }
 
 /**
