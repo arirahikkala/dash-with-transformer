@@ -4,6 +4,8 @@ An information-theory-based text input method powered by a language model. It di
 
 This project is unaffiliated with [Dasher](https://github.com/dasher-project), but is obviously very directly inspired by it.
 
+The front-end defaults to a small in-browser CPU LSTM model trained on FineWeb, which should somewhat work. You can also try the WebGPU option which defaults to running a small transformer model, but it's horrendously unoptimized, and may or may not work at all. Finally, you may set up the backend, which uses vLLM and seems to work based on casual testing.
+
 ## Architecture
 
 - **Frontend** (`frontend/`) — Vite + TypeScript. Renders the interactive widget on a canvas and drives mouse-based navigation through the language model's probability space.
