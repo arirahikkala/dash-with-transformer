@@ -21,12 +21,12 @@ npm run dev
 
 ### Configuration
 
-Configuration is passed via URL hash parameters, e.g. `http://localhost:5173/#backendUrl=http://myhost:8000&modelCallPrefix=Once upon a time`.
+Configuration is passed via URL hash parameters, e.g. `http://localhost:5173/#backendUrl=http://myhost:8000&remoteModelCallPrefix=Once upon a time`.
 
 | Parameter | Default | Description |
 |---|---|---|
 | `backendUrl` | `http://localhost:8000` | URL of the backend server |
-| `modelCallPrefix` | (empty) | Text prefix invisibly prepended to every model call, letting you steer generation from a given context |
+| `remoteModelCallPrefix` | (empty) | Text prefix invisibly prepended to every model call, letting you steer generation from a given context |
 
 ## Backend
 

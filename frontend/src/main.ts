@@ -27,10 +27,10 @@ const MAX_DT = 0.05;
 
 function createModel(
   backendUrl: string,
-  modelCallPrefix: string,
+  remoteModelCallPrefix: string,
 ): LanguageModel<readonly number[], number> {
   const { predictBytes } = createBackendClient(backendUrl);
-  const prefixBytes = new TextEncoder().encode(modelCallPrefix);
+  const prefixBytes = new TextEncoder().encode(remoteModelCallPrefix);
 
   const byteLevelModel =
     prefixBytes.length > 0
@@ -48,10 +48,10 @@ function createModel(
 async function main() {
   const hashParams = new URLSearchParams(window.location.hash.slice(1));
   let backendUrl = hashParams.get("backendUrl") ?? "http://localhost:8000";
-  let modelCallPrefix = hashParams.get("modelCallPrefix") ?? "";
-  let mode = hashParams.get("mode") ?? "backend";
+  let remoteModelCallPrefix = hashParams.get("remoteModelCallPrefix") ?? "";
+  let mode = hashParams.get("mode") ?? "lstm";
 
-  let model = createModel(backendUrl, modelCallPrefix);
+  let model = createModel(backendUrl, remoteModelCallPrefix);
 
   // --- Config inputs ---
   const modeSelect = document.getElementById(
@@ -72,7 +72,7 @@ async function main() {
   const prefixLabel = document.getElementById("prefix-label") as HTMLElement;
 
   backendUrlInput.value = backendUrl;
-  modelPrefixInput.value = modelCallPrefix;
+  modelPrefixInput.value = remoteModelCallPrefix;
   modeSelect.value = mode;
 
   // WebGPU model caching
@@ -96,11 +96,12 @@ async function main() {
 
   function updateHash() {
     const params = new URLSearchParams();
-    if (mode !== "backend") params.set("mode", mode);
+    params.set("mode", mode);
     if (backendUrl !== "http://localhost:8000") {
       params.set("backendUrl", backendUrl);
     }
-    if (modelCallPrefix) params.set("modelCallPrefix", modelCallPrefix);
+    if (remoteModelCallPrefix)
+      params.set("remoteModelCallPrefix", remoteModelCallPrefix);
     window.location.hash = params.toString();
   }
 
@@ -143,13 +144,13 @@ async function main() {
   function applyConfigChange() {
     const newUrl = backendUrlInput.value;
     const newPrefix = modelPrefixInput.value;
-    if (newUrl === backendUrl && newPrefix === modelCallPrefix) return;
+    if (newUrl === backendUrl && newPrefix === remoteModelCallPrefix) return;
     backendUrl = newUrl;
-    modelCallPrefix = newPrefix;
+    remoteModelCallPrefix = newPrefix;
     updateHash();
 
     if (mode === "backend") {
-      model = createModel(backendUrl, modelCallPrefix);
+      model = createModel(backendUrl, remoteModelCallPrefix);
       renderController?.abort();
       renderController = new AbortController();
       render(renderController.signal);
@@ -172,7 +173,7 @@ async function main() {
       if (mode !== "lstm") return;
       model = loaded;
     } else {
-      model = createModel(backendUrl, modelCallPrefix);
+      model = createModel(backendUrl, remoteModelCallPrefix);
     }
     cursor = { prefix: cursor.prefix, x: 0.0, y: 0.5 };
     renderController?.abort();
