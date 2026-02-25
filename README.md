@@ -2,7 +2,7 @@
 
 An information-theory-based text input method powered by a language model. It displays a widget that maps a language model's probability distribution onto a zoomable 2D space: you glide rightward to write, up/down to choose content, and leftward to correct mistakes.
 
-This project is unaffiliated with [Dasher](https://en.wikipedia.org/wiki/Dasher_(software)), but is obviously very directly inspired by it.
+This project is unaffiliated with [Dasher](https://github.com/dasher-project), but is obviously very directly inspired by it.
 
 ## Architecture
 
