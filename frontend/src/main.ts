@@ -4,7 +4,7 @@ import { forceCleanUtf8, fromByteLevelModel, trieCache } from "./models";
 import { normalizeCursor } from "./cursor";
 import { buildScene } from "./scene";
 import { renderScene } from "./render";
-import { loadSmolLM } from "./smollm";
+
 import { createCachedLSTMPredictor } from "./lstm";
 
 function prefixToString(prefix: readonly number[]): string {
@@ -109,9 +109,11 @@ async function main() {
     LanguageModel<readonly number[], number>
   > {
     if (!webgpuLoadPromise) {
-      webgpuLoadPromise = loadSmolLM((msg) => {
-        webgpuStatusEl.textContent = msg;
-      });
+      webgpuLoadPromise = import("./smollm").then(({ loadSmolLM }) =>
+        loadSmolLM((msg) => {
+          webgpuStatusEl.textContent = msg;
+        }),
+      );
     }
     webgpuModel = await webgpuLoadPromise;
     return webgpuModel;
