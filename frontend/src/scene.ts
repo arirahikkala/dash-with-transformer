@@ -6,26 +6,15 @@
  *
  * Three phases:
  *   1. Compute window bounds in cursor-local frame
- *   2. Ascend (exact Rat arithmetic) to find the scene root
- *   3. Descend (float arithmetic) building visible SceneNodes
+ *   2. Ascend to find the scene root
+ *   3. Descend building visible SceneNodes
  */
-
-import {
-  type Rat,
-  ZERO,
-  ONE,
-  add,
-  mul,
-  gte,
-  fromFloat,
-  toFloat,
-} from "./rational";
 
 import type { LanguageModel, Cursor, SceneNode, Scene } from "./types";
 import { first } from "./types";
 
 // ---------------------------------------------------------------------------
-// Phase 2: Ascend to scene root (Rat arithmetic)
+// Phase 2: Ascend to scene root
 // ---------------------------------------------------------------------------
 
 interface AscendResult<T> {
@@ -36,10 +25,10 @@ interface AscendResult<T> {
 
 /**
  * Walk up from the cursor prefix, transforming window bounds into each
- * parent's frame using exact rational arithmetic, until one level past
- * where the window [winTop, winBot] first fits within [0, 1]. This
- * ensures the node that fully covers the view is a child of the scene
- * root (and thus gets rendered), rather than being the scene root itself.
+ * parent's frame, until one level past where the window [winTop, winBot]
+ * first fits within [0, 1]. This ensures the node that fully covers the
+ * view is a child of the scene root (and thus gets rendered), rather than
+ * being the scene root itself.
  *
  * Each ascent step uses a specificToken lookup for the child we came
  * from — since we ascend from a normalized cursor, the cursor is always
@@ -52,42 +41,38 @@ async function ascendToSceneRoot<T>(
   winBotFloat: number,
 ): Promise<AscendResult<T>> {
   const mutablePrefix = [...prefix];
-  let winTop: Rat = fromFloat(winTopFloat);
-  let winBot: Rat = fromFloat(winBotFloat);
-  let fitted = gte(winTop, ZERO) && gte(ONE, winBot);
+  let winTop = winTopFloat;
+  let winBot = winBotFloat;
+  let fitted = winTop >= 0 && 1 >= winBot;
 
   while (mutablePrefix.length > 0) {
     const lastToken = mutablePrefix.pop()!;
     const tokenResult = await first(model(mutablePrefix, 0, 1, 0, lastToken));
 
-    let cumBefore: Rat = ZERO;
-    let prob: Rat = ZERO;
+    let cumBefore = 0;
+    let prob = 0;
     if (tokenResult) {
-      cumBefore = fromFloat(tokenResult.start);
-      prob = fromFloat(tokenResult.end - tokenResult.start);
+      cumBefore = tokenResult.start;
+      prob = tokenResult.end - tokenResult.start;
     }
 
     // Transform to parent's frame:
     //   parent_winTop = cumBefore + child_winTop * prob
     //   parent_winBot = cumBefore + child_winBot * prob
-    winTop = add(cumBefore, mul(winTop, prob));
-    winBot = add(cumBefore, mul(winBot, prob));
+    winTop = cumBefore + winTop * prob;
+    winBot = cumBefore + winBot * prob;
 
     // Go one level past the first fit so the node covering the entire
     // view becomes a *child* of the scene root and actually gets rendered.
     if (fitted) {
       break;
     }
-    if (gte(winTop, ZERO) && gte(ONE, winBot)) {
+    if (winTop >= 0 && 1 >= winBot) {
       fitted = true;
     }
   }
 
-  return {
-    scenePrefix: mutablePrefix,
-    winTop: toFloat(winTop),
-    winBot: toFloat(winBot),
-  };
+  return { scenePrefix: mutablePrefix, winTop, winBot };
 }
 
 // ---------------------------------------------------------------------------

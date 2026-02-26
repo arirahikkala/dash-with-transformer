@@ -64,8 +64,8 @@ async function expectSameGlobal<T>(
 ) {
   const ga = await cursorToGlobal(model, a);
   const gb = await cursorToGlobal(model, b);
-  expect(gb.x).toBeCloseTo(ga.x, 10);
-  expect(gb.y).toBeCloseTo(ga.y, 10);
+  expect(gb.x).toBeCloseTo(ga.x, 6);
+  expect(gb.y).toBeCloseTo(ga.y, 6);
 }
 
 // ---------------------------------------------------------------------------
@@ -401,94 +401,6 @@ describe("normalizeCursor", () => {
       expect(r.prefix[0]).toBe(tok2);
       expect(r.x).toBeCloseTo(0.3);
       expect(r.y).toBeCloseTo(0.1);
-    });
-  });
-
-  // -- Exact precision under deep ascent/descent --
-
-  describe("arbitrary-precision exactness", () => {
-    // These tests exercise scenarios where float64 arithmetic would
-    // accumulate visible error: deep ascent all the way to the root,
-    // then re-descent down a different branch.
-
-    it("deep round-trip: ascend 20 levels then re-descend", async () => {
-      // Start 20 levels deep in the "A" branch, then move y just past
-      // the boundary so we ascend all the way to the root and come back
-      // down the "B" branch.  With float math the repeated
-      //   y = cum + y * prob   (ascent)
-      //   y = (y - cum) / prob  (descent)
-      // would accumulate error; with exact rationals it's exact.
-      const depth = 20;
-      const prefix = Array<string>(depth).fill("A");
-      // y = 1.0 + tiny nudge → just past the bottom of the A square at
-      // every ancestor, forcing a full climb to root.
-      const state: Cursor<string> = {
-        prefix,
-        x: 0.3,
-        y: 1.0 + 1e-10,
-      };
-      const result = await normalizeCursor(binary, state);
-      await expectSameGlobal(binary, state, result);
-    });
-
-    it("deep round-trip: ascend 50 levels with asymmetric model", async () => {
-      const depth = 50;
-      const prefix = Array<string>(depth).fill("A");
-      const state: Cursor<string> = {
-        prefix,
-        x: 0.3,
-        y: 1.0 + 0.001,
-      };
-      const result = await normalizeCursor(asym, state);
-      await expectSameGlobal(asym, state, result);
-    });
-
-    it("deep descent lands exactly at zero", async () => {
-      // x = 1 − 2^(−5) = 0.96875, y = 0 (stays 0 throughout).
-      // After 5 descents into A: x should be exactly 0, y stays 0.
-      const x = 1 - 2 ** -5;
-      const r = await normalizeCursor(binary, { prefix: [], x, y: 0 });
-      expect(r.prefix).toEqual(["A", "A", "A", "A", "A"]);
-      expect(r.x).toBe(0); // exact zero, not ≈0
-      expect(r.y).toBe(0);
-    });
-
-    it("cross-branch sibling transfer at depth 30", async () => {
-      // Deeply nested in B, nudge y upward to cross into A at depth 30.
-      // This forces 30 ascents and 30 descents through a different branch.
-      const depth = 30;
-      const prefix = Array<string>(depth).fill("B");
-      const state: Cursor<string> = {
-        prefix,
-        x: 0.3,
-        y: -0.001, // just above B → enters A
-      };
-      const result = await normalizeCursor(binary, state);
-      await expectSameGlobal(binary, state, result);
-      // Should have landed in the A branch at the same depth.
-      expect(result.prefix.length).toBe(depth);
-      expect(result.prefix[result.prefix.length - 1]).toBe("A");
-    });
-
-    it("many-token distribution preserves position exactly", async () => {
-      // 10 tokens with awkward probabilities whose float sum isn't exact.
-      const probs = [
-        0.17, 0.13, 0.11, 0.09, 0.07, 0.06, 0.05, 0.03, 0.02, 0.27,
-      ];
-      const tokens = "abcdefghij".split("");
-      const manyModel = adaptModel<readonly string[], string>(async () =>
-        tokens.map((token, i) => ({ token, probability: probs[i] })),
-      );
-
-      // Nest 15 deep in "j" (prob 0.27), then nudge into "a".
-      const prefix = Array<string>(15).fill("j");
-      const state: Cursor<string> = {
-        prefix,
-        x: 0.4,
-        y: -0.01,
-      };
-      const result = await normalizeCursor(manyModel, state);
-      await expectSameGlobal(manyModel, state, result);
     });
   });
 });

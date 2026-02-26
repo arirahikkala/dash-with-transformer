@@ -24,9 +24,7 @@ Conceptually, a cursor just points at an exact (x, y) position in the unit squar
 
 In the actual implementation, it's a triplet (prefix, x, y), where x and y are in the current square's frame: x = 0 is the left edge, y = 0 is the top edge.
 
-`normalizeCursor` in `cursor.ts` implements smooth navigation through different prefixes by returning a cursor at the same global position, whose prefix is the smallest square that contains the cursor. Note that this requires exact rational arithmetic (via `rational.ts`) and a recursive ascent/descent search. But what it allows is that smooth movement in the widget can be animated by simply updating (x, y) and then calling normalizeCursor.
-
-The cursor's position outside of these calculations is kept in machine floats, so memory leaks from overly precise calculation results sticking around aren't a concern.
+`normalizeCursor` in `cursor.ts` implements smooth navigation through different prefixes by returning a cursor at the same global position, whose prefix is the smallest square that contains the cursor. This uses a recursive ascent/descent search. Smooth movement in the widget can be animated by simply updating (x, y) and then calling normalizeCursor.
 
 ### LanguageModel
 
@@ -54,7 +52,6 @@ Run `npm test` (or `npx vitest run`) in `frontend/` to execute the test suite. T
 
 ### Library-ish front-end code
 
-- `rational.ts` — exact BigInt rational arithmetic
 - `async-iterables`.ts — utilities for racing async iterables
 
 ### Backend (`backend/dash_with_transformer/`)
