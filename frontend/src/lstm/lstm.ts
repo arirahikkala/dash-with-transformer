@@ -405,51 +405,6 @@ export async function loadModel(urlPrefix: string): Promise<ByteLSTM> {
   return new ByteLSTM(manifest, buffer, wasmModule);
 }
 
-// ---------- LRU State Cache ----------
-
-class LSTMStateCache {
-  private cache = new Map<string, { state: LSTMState; lastAccess: number }>();
-  private accessCounter = 0;
-
-  constructor(private capacity: number = 1000) {}
-
-  private prefixKey(prefix: Uint8Array): string {
-    return String.fromCharCode(...prefix);
-  }
-
-  findLongestPrefix(
-    prefix: Uint8Array,
-  ): { state: LSTMState; length: number } | null {
-    for (let len = prefix.length; len > 0; len--) {
-      const key = this.prefixKey(prefix.subarray(0, len));
-      const entry = this.cache.get(key);
-      if (entry) {
-        entry.lastAccess = ++this.accessCounter;
-        return { state: entry.state, length: len };
-      }
-    }
-    return null;
-  }
-
-  set(prefix: Uint8Array, state: LSTMState): void {
-    const key = this.prefixKey(prefix);
-    this.cache.set(key, { state, lastAccess: ++this.accessCounter });
-
-    if (this.cache.size > this.capacity) {
-      // Evict least recently accessed entry
-      let oldestKey: string | null = null;
-      let oldestAccess = Infinity;
-      for (const [k, v] of this.cache) {
-        if (v.lastAccess < oldestAccess) {
-          oldestAccess = v.lastAccess;
-          oldestKey = k;
-        }
-      }
-      if (oldestKey !== null) this.cache.delete(oldestKey);
-    }
-  }
-}
-
 // ---------- Worker Pool ----------
 
 import type { WorkerResponse } from "./lstm-worker";
@@ -601,6 +556,7 @@ class LSTMWorkerPool {
 // ---------- Public API ----------
 
 import type { PlainTokenProb } from "../types";
+import { createTrieCache } from "../trie-cache";
 
 export async function createCachedLSTMPredictor(
   urlPrefix: string,
@@ -618,7 +574,7 @@ export async function createCachedLSTMPredictor(
 
   const pool = await LSTMWorkerPool.create(urlPrefix, numWorkers, onProgress);
 
-  const cache = new LSTMStateCache();
+  const cache = createTrieCache<LSTMState>();
 
   onProgress?.("Ready!");
 
@@ -632,7 +588,7 @@ export async function createCachedLSTMPredictor(
     if (prefix.length > 0) {
       const hit = cache.findLongestPrefix(prefix);
       if (hit) {
-        ancestorState = hit.state;
+        ancestorState = hit.value;
         cachedLen = hit.length;
       }
     }

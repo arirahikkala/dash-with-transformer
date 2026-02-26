@@ -23,6 +23,10 @@ export interface TrieCache<V> {
   getOrSet(prefix: Uint8Array, compute: () => V): V;
   /** Remove the cached value for `prefix`. */
   delete(prefix: Uint8Array): void;
+  /** Walk the trie along `prefix` and return the deepest node that has a value. */
+  findLongestPrefix(
+    prefix: Uint8Array,
+  ): { value: V; length: number } | undefined;
 }
 
 export function createTrieCache<V>(
@@ -117,6 +121,26 @@ export function createTrieCache<V>(
       if (node && "value" in node) {
         delete node.value;
       }
+    },
+
+    findLongestPrefix(prefix) {
+      tick();
+      let node = root;
+      touch(node);
+      let best: { value: V; length: number } | undefined;
+      if ("value" in node) {
+        best = { value: node.value!, length: 0 };
+      }
+      for (let i = 0; i < prefix.length; i++) {
+        const child = node.children.get(prefix[i]);
+        if (!child) break;
+        node = child;
+        touch(node);
+        if ("value" in node) {
+          best = { value: node.value!, length: i + 1 };
+        }
+      }
+      return best;
     },
   };
 }
