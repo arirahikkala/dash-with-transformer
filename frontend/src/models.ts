@@ -7,6 +7,7 @@ import {
   raceAsyncIterables,
   racePromises,
 } from "./async-iterables";
+import { createTrieCache } from "./trie-cache";
 import {
   first,
   type LanguageModel,
@@ -483,24 +484,18 @@ function legalUtf8NextByte(prefix: Uint8Array): (byte: number) => boolean {
 /**
  * Byte-trie cache for a PlainLanguageModel over byte prefixes.
  * Each unique prefix is computed at most once; subsequent queries
- * return the cached result.
+ * return the cached result.  Old entries are evicted automatically.
  */
 export function trieCache(
   model: PlainLanguageModel<Uint8Array, number>,
 ): PlainLanguageModel<Uint8Array, number> {
-  type Node = {
-    children: (Node | undefined)[];
-    result?: readonly PlainTokenProb<number>[];
-  };
-  const root: Node = { children: [] };
-
+  const cache = createTrieCache<readonly PlainTokenProb<number>[]>();
   return async (prefix: Uint8Array) => {
-    let node = root;
-    for (let i = 0; i < prefix.length; i++) {
-      const b = prefix[i];
-      node = node.children[b] ??= { children: [] };
-    }
-    return (node.result ??= await model(prefix));
+    const cached = cache.get(prefix);
+    if (cached !== undefined) return cached;
+    const result = await model(prefix);
+    cache.set(prefix, result);
+    return result;
   };
 }
 

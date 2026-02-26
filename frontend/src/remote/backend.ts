@@ -5,6 +5,7 @@
  */
 
 import { showErrorToast } from "../toast";
+import { createTrieCache, type TrieCache } from "../trie-cache";
 
 // ---------------------------------------------------------------------------
 // Request compression
@@ -15,30 +16,6 @@ async function gzipCompress(text: string): Promise<Blob> {
     .stream()
     .pipeThrough(new CompressionStream("gzip"));
   return new Response(stream).blob();
-}
-
-// ---------------------------------------------------------------------------
-// Trie cache
-// ---------------------------------------------------------------------------
-
-interface TrieNode {
-  children: Map<number, TrieNode>;
-  /** Cached or in-flight probability distribution (256 elements). */
-  dist?: Promise<number[]>;
-}
-
-/** Walk (or create) the trie path for `prefix` and return the leaf node. */
-function trieEnsure(root: TrieNode, prefix: Uint8Array): TrieNode {
-  let node = root;
-  for (const byte of prefix) {
-    let child = node.children.get(byte);
-    if (!child) {
-      child = { children: new Map() };
-      node.children.set(byte, child);
-    }
-    node = child;
-  }
-  return node;
 }
 
 // ---------------------------------------------------------------------------
@@ -57,7 +34,6 @@ interface TrieResponse {
 interface PendingRequest {
   prefix: Uint8Array;
   minProb: number;
-  node: TrieNode;
   resolve: (dist: number[]) => void;
   reject: (err: Error) => void;
 }
@@ -68,7 +44,7 @@ export interface BackendClient {
 
 export function createBackendClient(backendUrl: string): BackendClient {
   const predictUrl = `${backendUrl}/predict`;
-  const cache: TrieNode = { children: new Map() };
+  const cache: TrieCache<Promise<number[]>> = createTrieCache();
   let pending: PendingRequest[] = [];
   let flushScheduled = false;
 
@@ -78,10 +54,7 @@ export function createBackendClient(backendUrl: string): BackendClient {
       const childPrefix = new Uint8Array(prefix.length + 1);
       childPrefix.set(prefix);
       childPrefix[prefix.length] = byte;
-      const childNode = trieEnsure(cache, childPrefix);
-      if (!childNode.dist) {
-        childNode.dist = Promise.resolve(childTrie.dist);
-      }
+      cache.getOrSet(childPrefix, () => Promise.resolve(childTrie.dist));
       populateTrieCache(childPrefix, childTrie);
     }
   }
@@ -127,7 +100,7 @@ export function createBackendClient(backendUrl: string): BackendClient {
       const error = err instanceof Error ? err : new Error(String(err));
       showErrorToast(error.message);
       for (const req of batch) {
-        req.node.dist = undefined; // clear so the prefix can be retried
+        cache.delete(req.prefix);
         req.reject(error);
       }
     }
@@ -137,23 +110,21 @@ export function createBackendClient(backendUrl: string): BackendClient {
     prefix: Uint8Array,
     minProb: number,
   ): Promise<number[]> {
-    const node = trieEnsure(cache, prefix);
-    if (node.dist) return node.dist;
+    const cached = cache.get(prefix);
+    if (cached) return cached;
     const promise = new Promise<number[]>((resolve, reject) => {
       pending.push({
         prefix,
         minProb: minProb,
-        node,
         resolve,
         reject,
       });
       if (!flushScheduled) {
         flushScheduled = true;
         setTimeout(flush, 500);
-        //      queueMicrotask(flush);
       }
     });
-    node.dist = promise;
+    cache.set(prefix, promise);
     return promise;
   }
 
