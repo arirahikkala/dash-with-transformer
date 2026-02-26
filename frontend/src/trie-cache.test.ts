@@ -63,81 +63,75 @@ describe("createTrieCache", () => {
   });
 });
 
-describe("generation-based eviction", () => {
-  it("evicts oldest entries when capacity is exceeded", () => {
-    const cache = createTrieCache<number>(4);
+describe("generation-based pruning", () => {
+  it("evicts stale subtrees after pruneInterval ticks", () => {
+    // pruneInterval=10, maxAge=5: after 10 ticks, anything not
+    // touched in the last 5 generations gets clipped.
+    const cache = createTrieCache<number>(10, 5);
 
-    // Fill to capacity.
-    cache.set(prefix(1), 1);
-    cache.set(prefix(2), 2);
-    cache.set(prefix(3), 3);
-    cache.set(prefix(4), 4);
+    cache.set(prefix(1), 1); // generation ~1
+    cache.set(prefix(2), 2); // generation ~2
 
-    // All four present.
-    expect(cache.get(prefix(1))).toBe(1);
-    expect(cache.get(prefix(4))).toBe(4);
-
-    // Insert a 5th — triggers prune down to capacity/2 = 2.
-    // Oldest by insertion order are 1,2,3,4 but get() above touched
-    // 1 and 4, making 2 and 3 the oldest.
-    cache.set(prefix(5), 5);
-
-    // The two most recently touched (4 and 5) survive, plus 1 was
-    // touched by the get() above.  2 and 3 should be evicted.
-    // After prune, we keep capacity/2 = 2 entries.  The 5th entry
-    // was just inserted, so the 3 oldest of the 5 are pruned.
-    expect(cache.get(prefix(2))).toBeUndefined();
-    expect(cache.get(prefix(3))).toBeUndefined();
-  });
-
-  it("preserves recently-accessed entries over older ones", () => {
-    const cache = createTrieCache<number>(4);
-
-    cache.set(prefix(1), 1);
-    cache.set(prefix(2), 2);
-    cache.set(prefix(3), 3);
-    cache.set(prefix(4), 4);
-
-    // Touch the oldest entry to refresh it.
-    cache.get(prefix(1));
-
-    // Trigger eviction.
-    cache.set(prefix(5), 5);
-
-    // 1 was refreshed, so it should survive.  2 is the oldest.
-    expect(cache.get(prefix(1))).toBe(1);
-    expect(cache.get(prefix(2))).toBeUndefined();
-  });
-
-  it("can refill after eviction", () => {
-    const cache = createTrieCache<number>(4);
-
+    // Burn through generations by doing gets on a different key.
     for (let i = 0; i < 10; i++) {
-      cache.set(prefix(i), i);
+      cache.get(prefix(99)); // misses, but still ticks the generation
     }
 
-    // The most recent entries should be accessible.
-    expect(cache.get(prefix(9))).toBe(9);
-
-    // Old entries should have been evicted.
-    expect(cache.get(prefix(0))).toBeUndefined();
+    // Prune should have fired by now and clipped prefix(1) and prefix(2).
+    expect(cache.get(prefix(1))).toBeUndefined();
+    expect(cache.get(prefix(2))).toBeUndefined();
   });
 
-  it("cleans up empty structural nodes after eviction", () => {
-    const cache = createTrieCache<number>(2);
+  it("preserves recently-accessed entries", () => {
+    const cache = createTrieCache<number>(10, 5);
 
-    // Deep paths that share no structure.
+    cache.set(prefix(1), 1);
+    cache.set(prefix(2), 2);
+
+    // Keep prefix(1) alive by touching it periodically.
+    for (let i = 0; i < 12; i++) {
+      cache.get(prefix(1));
+    }
+
+    // prefix(1) was touched recently, prefix(2) was not.
+    expect(cache.get(prefix(1))).toBe(1);
+    expect(cache.get(prefix(2))).toBeUndefined();
+  });
+
+  it("clips entire subtrees, not just leaves", () => {
+    const cache = createTrieCache<number>(10, 5);
+
+    // Build a deep path.
     cache.set(prefix(1, 2, 3), 100);
-    cache.set(prefix(4, 5, 6), 200);
 
-    // This triggers eviction — the oldest entry's structural nodes
-    // should be cleaned up, so a fresh set doesn't find stale nodes.
-    cache.set(prefix(7, 8, 9), 300);
+    // Let it go stale.
+    for (let i = 0; i < 10; i++) {
+      cache.get(prefix(99));
+    }
 
-    expect(cache.get(prefix(7, 8, 9))).toBe(300);
-    // One of the first two was evicted.
-    const a = cache.get(prefix(1, 2, 3));
-    const b = cache.get(prefix(4, 5, 6));
-    expect([a, b]).toContain(undefined);
+    // The whole subtree under prefix(1) should be gone.
+    expect(cache.get(prefix(1, 2, 3))).toBeUndefined();
+
+    // We can reuse the prefix without stale structural nodes.
+    cache.set(prefix(1, 2, 3), 200);
+    expect(cache.get(prefix(1, 2, 3))).toBe(200);
+  });
+
+  it("touching a deep path keeps ancestors alive", () => {
+    const cache = createTrieCache<number>(20, 10);
+
+    cache.set(prefix(1), 10);
+    cache.set(prefix(1, 2), 20);
+    cache.set(prefix(1, 2, 3), 30);
+
+    // Only touch the deepest node — walk() stamps the whole path.
+    for (let i = 0; i < 22; i++) {
+      cache.get(prefix(1, 2, 3));
+    }
+
+    // All ancestors should still be alive because walk stamps the path.
+    expect(cache.get(prefix(1))).toBe(10);
+    expect(cache.get(prefix(1, 2))).toBe(20);
+    expect(cache.get(prefix(1, 2, 3))).toBe(30);
   });
 });

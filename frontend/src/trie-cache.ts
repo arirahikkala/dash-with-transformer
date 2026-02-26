@@ -1,9 +1,11 @@
 /**
  * A generic trie cache keyed on byte prefixes with generation-based eviction.
  *
- * Each populated node tracks when it was last accessed. When the number of
- * cached entries exceeds `capacity`, the least-recently-accessed half is
- * pruned, and empty structural nodes are cleaned up.
+ * Every access stamps all nodes along the root-to-leaf path with the current
+ * generation.  Every `pruneInterval` generations, a DFS clips any subtree
+ * whose root is older than `generation - maxAge`.  This is cheap (no sorting,
+ * no size tracking) and preserves the hot neighbourhood around recently-
+ * accessed prefixes.
  */
 
 interface TrieNode<V> {
@@ -13,103 +15,120 @@ interface TrieNode<V> {
 }
 
 export interface TrieCache<V> {
-  /** Return the cached value for `prefix`, or undefined. Touches the node. */
+  /** Return the cached value for `prefix`, or undefined. Touches the path. */
   get(prefix: Uint8Array): V | undefined;
-  /** Cache `value` at `prefix`. Touches the node. May trigger eviction. */
+  /** Cache `value` at `prefix`. Touches the path. May trigger pruning. */
   set(prefix: Uint8Array, value: V): void;
-  /** Return cached value or compute, cache, and return it. May trigger eviction. */
+  /** Return cached value or compute, cache, and return it. May trigger pruning. */
   getOrSet(prefix: Uint8Array, compute: () => V): V;
   /** Remove the cached value for `prefix`. */
   delete(prefix: Uint8Array): void;
 }
 
-export function createTrieCache<V>(capacity = 2048): TrieCache<V> {
+export function createTrieCache<V>(
+  pruneInterval = 20_000,
+  maxAge = 40_000,
+): TrieCache<V> {
   const root: TrieNode<V> = { children: new Map(), generation: 0 };
   let generation = 0;
-  let size = 0;
+  let nextPrune = pruneInterval;
+
+  function touch(node: TrieNode<V>): void {
+    node.generation = generation;
+  }
 
   function walk(prefix: Uint8Array): TrieNode<V> | undefined {
     let node = root;
+    touch(node);
     for (let i = 0; i < prefix.length; i++) {
       const child = node.children.get(prefix[i]);
       if (!child) return undefined;
       node = child;
+      touch(node);
     }
     return node;
   }
 
   function ensure(prefix: Uint8Array): TrieNode<V> {
     let node = root;
+    touch(node);
     for (let i = 0; i < prefix.length; i++) {
       let child = node.children.get(prefix[i]);
       if (!child) {
-        child = { children: new Map(), generation: 0 };
+        child = { children: new Map(), generation };
         node.children.set(prefix[i], child);
       }
       node = child;
+      touch(node);
     }
     return node;
   }
 
+  /** Clip subtrees older than the threshold. Returns subtree size (for logging). */
+  function subtreeSize(node: TrieNode<V>): number {
+    let count = 1;
+    for (const child of node.children.values()) {
+      count += subtreeSize(child);
+    }
+    return count;
+  }
+
   function prune(): void {
-    // Collect all populated nodes with their generations.
-    const entries: { node: TrieNode<V>; generation: number }[] = [];
-    const stack: TrieNode<V>[] = [root];
-    while (stack.length > 0) {
-      const node = stack.pop()!;
-      if ("value" in node) {
-        entries.push({ node, generation: node.generation });
-      }
-      for (const child of node.children.values()) stack.push(child);
-    }
+    const threshold = generation - maxAge;
+    let subtreesPruned = 0;
+    let nodesPruned = 0;
 
-    // Sort oldest first, remove until we're at half capacity.
-    entries.sort((a, b) => a.generation - b.generation);
-    const target = capacity >>> 1;
-    const toRemove = entries.length - target;
-    for (let i = 0; i < toRemove; i++) {
-      delete entries[i].node.value;
-      size--;
-    }
-
-    // Remove childless structural nodes (post-order DFS).
-    (function cleanup(node: TrieNode<V>): boolean {
+    (function sweep(node: TrieNode<V>): void {
       for (const [byte, child] of node.children) {
-        if (cleanup(child)) node.children.delete(byte);
+        if (child.generation < threshold) {
+          nodesPruned += subtreeSize(child);
+          node.children.delete(byte);
+          subtreesPruned++;
+        } else {
+          sweep(child);
+        }
       }
-      return !("value" in node) && node.children.size === 0;
     })(root);
+
+    if (subtreesPruned > 0) {
+      console.log(
+        `trie-cache prune: clipped ${subtreesPruned} subtrees (${nodesPruned} nodes total)`,
+      );
+    }
+  }
+
+  function tick(): void {
+    generation++;
+    if (generation >= nextPrune) {
+      nextPrune = generation + pruneInterval;
+      prune();
+    }
   }
 
   return {
     get(prefix) {
+      tick();
       const node = walk(prefix);
       if (node && "value" in node) {
-        node.generation = ++generation;
         return node.value;
       }
       return undefined;
     },
 
     set(prefix, value) {
+      tick();
       const node = ensure(prefix);
-      if (!("value" in node)) size++;
       node.value = value;
-      node.generation = ++generation;
-      if (size > capacity) prune();
     },
 
     getOrSet(prefix, compute) {
+      tick();
       const node = ensure(prefix);
       if ("value" in node) {
-        node.generation = ++generation;
         return node.value!;
       }
       const value = compute();
       node.value = value;
-      size++;
-      node.generation = ++generation;
-      if (size > capacity) prune();
       return value;
     },
 
@@ -117,7 +136,6 @@ export function createTrieCache<V>(capacity = 2048): TrieCache<V> {
       const node = walk(prefix);
       if (node && "value" in node) {
         delete node.value;
-        size--;
       }
     },
   };
