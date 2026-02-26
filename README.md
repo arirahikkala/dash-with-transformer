@@ -8,8 +8,8 @@ The front-end defaults to a small in-browser CPU LSTM model trained on FineWeb, 
 
 ## Architecture
 
-- **Frontend** (`frontend/`) — Vite + TypeScript. Renders the interactive widget on a canvas and drives mouse-based navigation through the language model's probability space.
-- **Backend** (`backend/`) — Python + FastAPI. Wraps a byte-level language model (via `genlm-bytes`) and serves next-byte probability distributions over a `/predict` endpoint.
+- **Frontend** (`frontend/`) — Vite + TypeScript.
+- **Backend** (`backend/`) — Python + FastAPI.
 
 ## Frontend
 
@@ -28,7 +28,7 @@ Configuration is passed via URL hash parameters, e.g. `http://localhost:5173/#ba
 | Parameter | Default | Description |
 |---|---|---|
 | `backendUrl` | `http://localhost:8000` | URL of the backend server |
-| `remoteModelCallPrefix` | (empty) | Text prefix invisibly prepended to every model call, letting you steer generation from a given context |
+| `remoteModelCallPrefix` | (empty) | Text prefix invisibly prepended to remote model calls. Useful for models that just predict endoftext off a BOS-only context, for instance. |
 
 ## Backend
 
@@ -60,7 +60,7 @@ Configured in `engine.py` and read at import time:
 
 | Variable | Default | Description |
 |---|---|---|
-| `MODEL_NAME` | `gpt2-medium` | Model name passed to `genlm`'s `load_model_by_name` |
+| `MODEL_NAME` | `gpt2-medium` | Huggingface model ID |
 | `BEAM_K` | `5` | Beam width for `ByteBeamState` inference |
 | `PRUNE_THRESHOLD` | `0.05` | Beam pruning threshold — beams with probability below this fraction of the best beam are dropped |
 | `CACHE_MAX_SIZE` | `10000` | Maximum number of entries in the LRU state cache |
