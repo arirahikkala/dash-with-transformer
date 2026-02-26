@@ -26,8 +26,8 @@ export interface TrieCache<V> {
 }
 
 export function createTrieCache<V>(
-  pruneInterval = 20_000,
-  maxAge = 40_000,
+  pruneInterval = 200_000,
+  maxAge = 400_000,
 ): TrieCache<V> {
   const root: TrieNode<V> = { children: new Map(), generation: 0 };
   let generation = 0;
@@ -64,37 +64,17 @@ export function createTrieCache<V>(
     return node;
   }
 
-  /** Clip subtrees older than the threshold. Returns subtree size (for logging). */
-  function subtreeSize(node: TrieNode<V>): number {
-    let count = 1;
-    for (const child of node.children.values()) {
-      count += subtreeSize(child);
-    }
-    return count;
-  }
-
   function prune(): void {
     const threshold = generation - maxAge;
-    let subtreesPruned = 0;
-    let nodesPruned = 0;
-
     (function sweep(node: TrieNode<V>): void {
       for (const [byte, child] of node.children) {
         if (child.generation < threshold) {
-          nodesPruned += subtreeSize(child);
           node.children.delete(byte);
-          subtreesPruned++;
         } else {
           sweep(child);
         }
       }
     })(root);
-
-    if (subtreesPruned > 0) {
-      console.log(
-        `trie-cache prune: clipped ${subtreesPruned} subtrees (${nodesPruned} nodes total)`,
-      );
-    }
   }
 
   function tick(): void {
