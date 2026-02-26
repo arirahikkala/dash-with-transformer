@@ -3,7 +3,7 @@ import {
   type LanguageModel,
   type PlainLanguageModel,
   type PlainTokenProb,
-} from "./types";
+} from "../types";
 
 // =====================================================================
 // Log-space arithmetic

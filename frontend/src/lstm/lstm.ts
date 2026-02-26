@@ -600,7 +600,7 @@ class LSTMWorkerPool {
 
 // ---------- Public API ----------
 
-import type { PlainTokenProb } from "./types";
+import type { PlainTokenProb } from "../types";
 
 export async function createCachedLSTMPredictor(
   urlPrefix: string,

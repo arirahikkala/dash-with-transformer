@@ -4,7 +4,7 @@
  * - Automatic request batching via microtask scheduling
  */
 
-import { showErrorToast } from "./toast";
+import { showErrorToast } from "../toast";
 
 // ---------------------------------------------------------------------------
 // Request compression

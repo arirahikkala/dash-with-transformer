@@ -8,9 +8,9 @@ import type {
   LanguageModel,
   PlainLanguageModel,
   PlainTokenProb,
-} from "./types";
+} from "../types";
 import { detokenize } from "./detokenize";
-import { fromCharCodeModel } from "./models";
+import { fromCharCodeModel } from "./charcode-model";
 
 const MODEL_ID = "onnx-community/SmolLM2-135M-ONNX";
 

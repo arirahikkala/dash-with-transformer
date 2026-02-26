@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { fromCharCodeModel } from "./models";
-import { adaptModel, type PlainTokenProb } from "./types";
+import { fromCharCodeModel } from "./charcode-model";
+import { adaptModel, type PlainTokenProb } from "../types";
 
 // ---------------------------------------------------------------------------
 // Test helpers

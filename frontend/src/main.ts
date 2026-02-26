@@ -1,11 +1,11 @@
 import type { Cursor, LanguageModel } from "./types";
-import { createBackendClient } from "./backend";
+import { createBackendClient } from "./remote/backend";
 import { forceCleanUtf8, fromByteLevelModel, trieCache } from "./models";
 import { normalizeCursor } from "./cursor";
 import { buildScene } from "./scene";
 import { renderScene } from "./render";
 
-import { createCachedLSTMPredictor } from "./lstm";
+import { createCachedLSTMPredictor } from "./lstm/lstm";
 
 function prefixToString(prefix: readonly number[]): string {
   return String.fromCodePoint(...prefix);
@@ -109,7 +109,7 @@ async function main() {
     LanguageModel<readonly number[], number>
   > {
     if (!webgpuLoadPromise) {
-      webgpuLoadPromise = import("./smollm").then(({ loadSmolLM }) =>
+      webgpuLoadPromise = import("./webgpu/smollm").then(({ loadSmolLM }) =>
         loadSmolLM((msg) => {
           webgpuStatusEl.textContent = msg;
         }),

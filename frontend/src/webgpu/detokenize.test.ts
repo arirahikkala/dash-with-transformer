@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { detokenize } from "./detokenize";
-import type { PlainLanguageModel, PlainTokenProb } from "./types";
+import type { PlainLanguageModel, PlainTokenProb } from "../types";
 
 // ---------------------------------------------------------------------------
 // Test helpers
