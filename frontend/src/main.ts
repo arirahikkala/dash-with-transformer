@@ -104,14 +104,9 @@ async function main() {
           statusEl.textContent = msg;
         });
         const cleanModel = trieCache(forceCleanUtf8(predict));
-        return fromByteLevelModel(async (prefix: Uint8Array) => {
-          const dist = await cleanModel(prefix);
-          const result: number[] = new Array(256).fill(0);
-          for (const { token, probability } of dist) {
-            result[token] = probability;
-          }
-          return result;
-        });
+        return fromByteLevelModel(async (prefix, _minProb) =>
+          cleanModel(prefix),
+        );
       })();
     }
     lstmModel = await lstmLoadPromise;

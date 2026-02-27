@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { fromByteLevelModel, forceCleanUtf8, interpolate } from "./models";
+import {
+  fromByteLevelModel,
+  forceCleanUtf8,
+  interpolate,
+  type ByteLevelModel,
+} from "./models";
 import {
   adaptModel,
   type CDFView,
@@ -10,11 +15,6 @@ import {
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
-
-type ByteLevelModel = (
-  bytePrefix: Uint8Array,
-  minProb: number,
-) => Promise<number[]>;
 
 /** Collect all items from an async iterable into an array. */
 async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {
@@ -41,13 +41,22 @@ function prefixKey(buf: Uint8Array): string {
     .join("");
 }
 
+/** Convert a 256-element probability array to TokenProb[]. */
+function distToTokenProbs(dist: number[]): readonly TokenProb<number>[] {
+  const result: TokenProb<number>[] = [];
+  for (let i = 0; i < dist.length; i++) {
+    if (dist[i] > 0) result.push({ token: i, probability: dist[i] });
+  }
+  return result;
+}
+
 /** Create a mock byte-level model from a hex-key → dist table. */
 function makeMockModel(table: Record<string, number[]>): ByteLevelModel {
   return async (prefix: Uint8Array) => {
     const key = prefixKey(prefix);
     const result = table[key];
     if (!result) throw new Error(`Unexpected byte prefix: "${key}"`);
-    return result;
+    return distToTokenProbs(result);
   };
 }
 
@@ -62,7 +71,7 @@ function makeTrackingModel(table: Record<string, number[]>): {
     calls.push(key);
     const result = table[key];
     if (!result) throw new Error(`Unexpected byte prefix: "${key}"`);
-    return result;
+    return distToTokenProbs(result);
   };
   return { model, calls };
 }
@@ -530,7 +539,7 @@ describe("parallelism", () => {
       // Yield so concurrent calls can register.
       await new Promise((resolve) => setTimeout(resolve, 0));
       activeCalls--;
-      return table[key]!;
+      return distToTokenProbs(table[key]!);
     };
 
     const lm = fromByteLevelModel(model);
