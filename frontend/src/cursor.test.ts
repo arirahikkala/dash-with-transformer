@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { LanguageModel, Cursor } from "./types";
+import type { CDFView, Cursor } from "./types";
 import { adaptModel } from "./types";
 import { normalizeCursor, cursorToGlobal } from "./cursor";
 
@@ -58,7 +58,7 @@ const empty = adaptModel<readonly string[], string>(async () => []);
 
 /** Assert that two cursor states point at the same global location. */
 async function expectSameGlobal<T>(
-  model: LanguageModel<readonly T[], T>,
+  model: CDFView<readonly T[], T>,
   a: Cursor<T>,
   b: Cursor<T>,
 ) {
@@ -269,7 +269,7 @@ describe("normalizeCursor", () => {
   describe("global position preservation", () => {
     const cases: Array<{
       name: string;
-      model: LanguageModel<readonly string[], string>;
+      model: CDFView<readonly string[], string>;
       state: Cursor<string>;
     }> = [
       {

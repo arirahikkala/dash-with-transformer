@@ -2,9 +2,9 @@ import { describe, it, expect } from "vitest";
 import { fromByteLevelModel, forceCleanUtf8, interpolate } from "./models";
 import {
   adaptModel,
+  type CDFView,
   type LanguageModel,
-  type PlainLanguageModel,
-  type PlainTokenProb,
+  type TokenProb,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -665,7 +665,7 @@ describe("interpolate", () => {
   /** Create a model that always returns the given distribution (ignores prefix). */
   function simpleModel(
     dist: { token: number; probability: number }[],
-  ): LanguageModel<string, number> {
+  ): CDFView<string, number> {
     return adaptModel(async () => dist);
   }
 
@@ -863,7 +863,7 @@ describe("interpolate", () => {
 
     const makeSlowModel = (
       dist: readonly { token: number; probability: number }[],
-    ): LanguageModel<string, number> =>
+    ): CDFView<string, number> =>
       adaptModel(async () => {
         activeCalls++;
         maxConcurrency = Math.max(maxConcurrency, activeCalls);
@@ -896,10 +896,10 @@ describe("interpolate", () => {
 // ---------------------------------------------------------------------------
 
 describe("forceCleanUtf8", () => {
-  /** Create a mock PlainLanguageModel from a hex-key → dist table. */
+  /** Create a mock LanguageModel from a hex-key → dist table. */
   function makePlainModel(
-    table: Record<string, readonly PlainTokenProb<number>[]>,
-  ): PlainLanguageModel<Uint8Array, number> {
+    table: Record<string, readonly TokenProb<number>[]>,
+  ): LanguageModel<Uint8Array, number> {
     return async (prefix: Uint8Array) => {
       const key = prefixKey(prefix);
       const result = table[key];

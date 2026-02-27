@@ -3,7 +3,7 @@
  * See CLAUDE.md for the geometric model and core math concepts.
  */
 
-import type { LanguageModel, Cursor } from "./types";
+import type { CDFView, Cursor } from "./types";
 import { first } from "./types";
 
 export interface NormalizeOptions {
@@ -25,7 +25,7 @@ export interface NormalizeOptions {
  * changed (unless some token has probability exactly 1).
  */
 export async function normalizeCursor<T>(
-  model: LanguageModel<readonly T[], T>,
+  model: CDFView<readonly T[], T>,
   state: Cursor<T>,
   options?: NormalizeOptions,
 ): Promise<Cursor<T>> {
@@ -111,7 +111,7 @@ export async function normalizeCursor<T>(
  * Useful for verifying that normalisation preserves position.
  */
 export async function cursorToGlobal<T>(
-  model: LanguageModel<readonly T[], T>,
+  model: CDFView<readonly T[], T>,
   state: Cursor<T>,
 ): Promise<{ x: number; y: number }> {
   let size = 1;

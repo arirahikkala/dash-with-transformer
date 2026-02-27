@@ -555,14 +555,14 @@ class LSTMWorkerPool {
 
 // ---------- Public API ----------
 
-import type { PlainTokenProb } from "../types";
+import type { TokenProb } from "../types";
 import { createTrieCache } from "../trie-cache";
 
 export async function createCachedLSTMPredictor(
   urlPrefix: string,
   onProgress?: (msg: string) => void,
 ): Promise<{
-  predict: (prefix: Uint8Array) => Promise<readonly PlainTokenProb<number>[]>;
+  predict: (prefix: Uint8Array) => Promise<readonly TokenProb<number>[]>;
   dispose: () => void;
 }> {
   onProgress?.("Loading LSTM model\u2026");
@@ -580,7 +580,7 @@ export async function createCachedLSTMPredictor(
 
   async function predict(
     prefix: Uint8Array,
-  ): Promise<readonly PlainTokenProb<number>[]> {
+  ): Promise<readonly TokenProb<number>[]> {
     // Find longest cached prefix
     let ancestorState: LSTMState | null = null;
     let cachedLen = 0;
@@ -631,8 +631,8 @@ export async function createCachedLSTMPredictor(
   };
 }
 
-function toPlainProbs(probs: Float32Array): PlainTokenProb<number>[] {
-  const result: PlainTokenProb<number>[] = [];
+function toPlainProbs(probs: Float32Array): TokenProb<number>[] {
+  const result: TokenProb<number>[] = [];
   for (let i = 0; i < probs.length; i++) {
     if (probs[i] > 0) {
       result.push({ token: i, probability: probs[i] });

@@ -26,7 +26,7 @@ In the actual implementation, it's a triplet (prefix, x, y), where x and y are i
 
 `normalizeCursor` in `cursor.ts` implements smooth navigation through different prefixes by returning a cursor at the same global position, whose prefix is the smallest square that contains the cursor. This uses a recursive ascent/descent search. Smooth movement in the widget can be animated by simply updating (x, y) and then calling normalizeCursor.
 
-### LanguageModel
+### CDFView
 
 A view into the cumulative distribution function of a language model's next-token distribution at a given prefix. Tokens are returned with their *extents* in the CDF.
 

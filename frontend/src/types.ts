@@ -10,7 +10,7 @@
  * A node's extents depend only on the prefix — the query parameters
  * (rangeStart, rangeEnd, minProb) only govern whether it is listed.
  */
-export interface TokenProb<T> {
+export interface TokenCDFExtent<T> {
   readonly token: T;
   readonly start: number;
   readonly end: number;
@@ -19,7 +19,7 @@ export interface TokenProb<T> {
 /**
  * A plain token-probability pair, before cumulative extents are computed.
  */
-export interface PlainTokenProb<T> {
+export interface TokenProb<T> {
   readonly token: T;
   readonly probability: number;
 }
@@ -27,19 +27,21 @@ export interface PlainTokenProb<T> {
 /**
  * A simple language model that returns a plain probability distribution
  * (without cumulative extents or filtering).  Use `adaptModel` to convert
- * to a full `LanguageModel`.
+ * to a full `CDFView`.
  */
-export type PlainLanguageModel<P, T> = (
+export type LanguageModel<P, T> = (
   prefix: P,
-) => Promise<readonly PlainTokenProb<T>[]>;
+) => Promise<readonly TokenProb<T>[]>;
 
 /**
- * A language model: given a prefix and visibility constraints, return
- * the matching entries from the next-token distribution.
+ * Given a prefix and visibility constraints, finds the matching entries from the next-token distribution.
  *
- * Returned entries must not overlap, must have no holes between
- * successive entries in the full distribution, and their extents must depend
- * only on the prefix. Entries may be returned in any order.
+ * Implementations must ensure that:
+ * - token extents do not overlap
+ * - token extents have no holes between successive entries in the full distribution
+ * - token extents don't vary between different calls with the same prefix; only the ordering and presence may change
+ *
+ * Tokens may be yielded in any order.
  *
  * @param prefix        - The token prefix.
  * @param rangeStart    - Only return entries overlapping [rangeStart, rangeEnd].
@@ -51,21 +53,21 @@ export type PlainLanguageModel<P, T> = (
  * @template P - The type of the prefix (e.g. `string`, `readonly number[]`).
  * @template T - The type of each next-token.
  */
-export type LanguageModel<P, T> = (
+export type CDFView<P, T> = (
   prefix: P,
   rangeStart: number,
   rangeEnd: number,
   minProb: number,
   specificToken?: T,
-) => AsyncIterable<TokenProb<T>>;
+) => AsyncIterable<TokenCDFExtent<T>>;
 
 /**
- * Adapt a simple probability-list model into a full LanguageModel
+ * Adapt a simple probability-list model into a full CDFView
  * that computes cumulative extents and handles range/size filtering.
  */
 export function adaptModel<P, T>(
-  inner: (prefix: P) => Promise<readonly PlainTokenProb<T>[]>,
-): LanguageModel<P, T> {
+  inner: (prefix: P) => Promise<readonly TokenProb<T>[]>,
+): CDFView<P, T> {
   return async function* (
     prefix,
     rangeStart,

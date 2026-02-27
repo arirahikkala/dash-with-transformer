@@ -142,19 +142,27 @@
       </div>
     </div>
     <div id="config-bar">
-      <label>Mode
+      <label
+        >Mode
         <select id="inference-mode">
           <option value="backend">Remote</option>
           <option value="lstm">CPU (LSTM)</option>
         </select>
       </label>
-      <label id="backend-url-label">Backend URL <input id="backend-url" type="text" spellcheck="false" /></label>
+      <label id="backend-url-label"
+        >Backend URL <input id="backend-url" type="text" spellcheck="false"
+      /></label>
     </div>
     <div id="status"></div>
-    <label id="prefix-label">Prefix
+    <label id="prefix-label"
+      >Prefix
       <textarea id="model-prefix" spellcheck="false"></textarea>
     </label>
-    <a id="repo-link" href="https://github.com/arirahikkala/dash-with-transformer">github.com/arirahikkala/dash-with-transformer</a>
+    <a
+      id="repo-link"
+      href="https://github.com/arirahikkala/dash-with-transformer"
+      >github.com/arirahikkala/dash-with-transformer</a
+    >
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

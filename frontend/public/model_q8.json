@@ -8,10 +8,7 @@
   "weights": [
     {
       "name": "embed.weight",
-      "shape": [
-        256,
-        128
-      ],
+      "shape": [256, 128],
       "dtype": "int8",
       "offset": 0,
       "length": 32768,
@@ -19,10 +16,7 @@
     },
     {
       "name": "lstm.weight_ih_l0",
-      "shape": [
-        2048,
-        128
-      ],
+      "shape": [2048, 128],
       "dtype": "int8",
       "offset": 32768,
       "length": 262144,
@@ -30,10 +24,7 @@
     },
     {
       "name": "lstm.weight_hh_l0",
-      "shape": [
-        2048,
-        512
-      ],
+      "shape": [2048, 512],
       "dtype": "int8",
       "offset": 294912,
       "length": 1048576,
@@ -41,9 +32,7 @@
     },
     {
       "name": "lstm.bias_l0",
-      "shape": [
-        2048
-      ],
+      "shape": [2048],
       "dtype": "int8",
       "offset": 1343488,
       "length": 2048,
@@ -51,10 +40,7 @@
     },
     {
       "name": "lstm.weight_ih_l1",
-      "shape": [
-        2048,
-        512
-      ],
+      "shape": [2048, 512],
       "dtype": "int8",
       "offset": 1345536,
       "length": 1048576,
@@ -62,10 +48,7 @@
     },
     {
       "name": "lstm.weight_hh_l1",
-      "shape": [
-        2048,
-        512
-      ],
+      "shape": [2048, 512],
       "dtype": "int8",
       "offset": 2394112,
       "length": 1048576,
@@ -73,9 +56,7 @@
     },
     {
       "name": "lstm.bias_l1",
-      "shape": [
-        2048
-      ],
+      "shape": [2048],
       "dtype": "int8",
       "offset": 3442688,
       "length": 2048,
@@ -83,10 +64,7 @@
     },
     {
       "name": "proj.weight",
-      "shape": [
-        256,
-        512
-      ],
+      "shape": [256, 512],
       "dtype": "int8",
       "offset": 3444736,
       "length": 131072,
@@ -94,9 +72,7 @@
     },
     {
       "name": "proj.bias",
-      "shape": [
-        256
-      ],
+      "shape": [256],
       "dtype": "int8",
       "offset": 3575808,
       "length": 256,

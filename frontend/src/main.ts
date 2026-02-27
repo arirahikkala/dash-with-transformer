@@ -1,4 +1,4 @@
-import type { Cursor, LanguageModel } from "./types";
+import type { Cursor, CDFView } from "./types";
 import { createBackendClient } from "./remote/backend";
 import { forceCleanUtf8, fromByteLevelModel, trieCache } from "./models";
 import { normalizeCursor } from "./cursor";
@@ -28,7 +28,7 @@ const MAX_DT = 0.05;
 function createModel(
   backendUrl: string,
   remoteModelCallPrefix: string,
-): LanguageModel<readonly number[], number> {
+): CDFView<readonly number[], number> {
   const { predictBytes } = createBackendClient(backendUrl);
   const prefixBytes = new TextEncoder().encode(remoteModelCallPrefix);
 
@@ -74,10 +74,9 @@ async function main() {
   modeSelect.value = mode;
 
   // LSTM model caching
-  let lstmModel: LanguageModel<readonly number[], number> | null = null;
-  let lstmLoadPromise: Promise<
-    LanguageModel<readonly number[], number>
-  > | null = null;
+  let lstmModel: CDFView<readonly number[], number> | null = null;
+  let lstmLoadPromise: Promise<CDFView<readonly number[], number>> | null =
+    null;
 
   function updateModeUI() {
     const isBackend = mode === "backend";
@@ -97,9 +96,7 @@ async function main() {
     window.location.hash = params.toString();
   }
 
-  async function loadLSTMModel(): Promise<
-    LanguageModel<readonly number[], number>
-  > {
+  async function loadLSTMModel(): Promise<CDFView<readonly number[], number>> {
     if (!lstmLoadPromise) {
       lstmLoadPromise = (async () => {
         const base = import.meta.env.BASE_URL.replace(/\/$/, "");

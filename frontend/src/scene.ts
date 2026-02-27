@@ -10,7 +10,7 @@
  *   3. Descend building visible SceneNodes
  */
 
-import type { LanguageModel, Cursor, SceneNode, Scene } from "./types";
+import type { CDFView, Cursor, SceneNode, Scene } from "./types";
 import { first } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -35,7 +35,7 @@ interface AscendResult<T> {
  * inside that child, never in an ancestor's sibling.
  */
 async function ascendToSceneRoot<T>(
-  model: LanguageModel<readonly T[], T>,
+  model: CDFView<readonly T[], T>,
   prefix: readonly T[],
   winTopFloat: number,
   winBotFloat: number,
@@ -91,7 +91,7 @@ async function ascendToSceneRoot<T>(
  * @param absProb - absolute probability of this prefix (in scene root frame)
  */
 async function* buildChildren<T>(
-  model: LanguageModel<readonly T[], T>,
+  model: CDFView<readonly T[], T>,
   prefix: readonly T[],
   scale: number,
   offset: number,
@@ -148,7 +148,7 @@ export interface BuildSceneOptions {
  * @param options   - Optional settings
  */
 export async function buildScene<T>(
-  model: LanguageModel<readonly T[], T>,
+  model: CDFView<readonly T[], T>,
   cursor: Cursor<T>,
   minHeight: number,
   options?: BuildSceneOptions,

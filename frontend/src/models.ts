@@ -10,10 +10,10 @@ import {
 import { createTrieCache } from "./trie-cache";
 import {
   first,
+  type CDFView,
   type LanguageModel,
-  type PlainLanguageModel,
-  type PlainTokenProb,
   type TokenProb,
+  type TokenCDFExtent,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -67,7 +67,7 @@ type ByteLevelModel = (
 ) => Promise<number[]>;
 
 /**
- * Recursively expand a partial UTF-8 sequence into filtered TokenProb entries
+ * Recursively expand a partial UTF-8 sequence into filtered TokenCDFExtent entries
  * by querying the byte-level model for continuation bytes.
  *
  * At each level the cumulative positions of all sub-groups are computed
@@ -88,7 +88,7 @@ async function* expandMultiByte(
   rangeStart: number,
   rangeEnd: number,
   minProb: number,
-): AsyncGenerator<TokenProb<number>> {
+): AsyncGenerator<TokenCDFExtent<number>> {
   if (partialBytes.length === totalBytes) {
     const start = cumStart;
     const end = cumStart + probSoFar;
@@ -104,7 +104,7 @@ async function* expandMultiByte(
   // Single pass: accumulate cumulative positions for ALL non-zero
   // continuation bytes (so later sub-groups are positioned correctly),
   // but only recurse into those that pass the range/size filters.
-  const subtrees: AsyncIterable<TokenProb<number>>[] = [];
+  const subtrees: AsyncIterable<TokenCDFExtent<number>>[] = [];
   let cum = cumStart;
   for (let b = 0; b < 256; b++) {
     if (dist[b] === 0) continue;
@@ -139,14 +139,14 @@ async function* expandMultiByte(
 
 /**
  * Look up a single codepoint's cumulative extent in the byte-level model.
- * Returns the TokenProb for the codepoint, or null if the model assigns it
+ * Returns the TokenCDFExtent for the codepoint, or null if the model assigns it
  * zero probability at any byte level.
  */
 async function lookupSpecificToken(
   model: ByteLevelModel,
   bytePrefix: Uint8Array,
   codepoint: number,
-): Promise<TokenProb<number> | null> {
+): Promise<TokenCDFExtent<number> | null> {
   const targetBytes = [...codepointsToUtf8([codepoint])];
 
   // Fire all byte-level queries in parallel — the prefix for level i
@@ -183,7 +183,7 @@ async function lookupSpecificToken(
 // ---------------------------------------------------------------------------
 
 /**
- * Adapt a byte-level UTF-8 model into a codepoint-level LanguageModel.
+ * Adapt a byte-level UTF-8 model into a codepoint-level CDFView.
  *
  * The byte-level model predicts the next byte given a UTF-8 byte prefix.
  * It must return exactly 256 probabilities summing to 1, with zero
@@ -207,7 +207,7 @@ async function lookupSpecificToken(
  */
 export function fromByteLevelModel(
   byteLevelModel: ByteLevelModel,
-): LanguageModel<readonly number[], number> {
+): CDFView<readonly number[], number> {
   return async function* (
     prefix: readonly number[],
     rangeStart: number,
@@ -254,7 +254,7 @@ export function fromByteLevelModel(
     }
 
     // 4. Multi-byte groups: expand in parallel, yield as each resolves.
-    const expansions: AsyncIterable<TokenProb<number>>[] = [];
+    const expansions: AsyncIterable<TokenCDFExtent<number>>[] = [];
 
     for (let b = 0xc0; b <= 0xff; b++) {
       if (firstByteDist[b] === 0) continue;
@@ -315,8 +315,8 @@ export function fromByteLevelModel(
  * Weights are normalized to sum to 1. Negative weights throw an error.
  */
 export function interpolate<P, T>(
-  components: { model: LanguageModel<P, T>; weight: number }[],
-): LanguageModel<P, T> {
+  components: { model: CDFView<P, T>; weight: number }[],
+): CDFView<P, T> {
   if (components.length === 1) {
     return components[0].model;
   }
@@ -362,7 +362,7 @@ export function interpolate<P, T>(
     // Query all models with full range and the caller's minProb.
     // Any token with mixture probability >= minProb must have probability
     // >= minProb in at least one model (since Σw_i = 1).
-    const maps: Map<T, TokenProb<T>>[] = models.map(() => new Map());
+    const maps: Map<T, TokenCDFExtent<T>>[] = models.map(() => new Map());
     const yielded = new Set<T>();
 
     for await (const { value: entry, index } of raceAsyncIterables(
@@ -394,7 +394,7 @@ export function interpolate<P, T>(
       for (const token of m.keys()) allTokens.add(token);
     }
 
-    const remainderPromises: Promise<TokenProb<T> | null>[] = [];
+    const remainderPromises: Promise<TokenCDFExtent<T> | null>[] = [];
 
     for (const token of allTokens) {
       if (yielded.has(token)) continue;
@@ -482,14 +482,14 @@ function legalUtf8NextByte(prefix: Uint8Array): (byte: number) => boolean {
 }
 
 /**
- * Byte-trie cache for a PlainLanguageModel over byte prefixes.
+ * Byte-trie cache for a LanguageModel over byte prefixes.
  * Each unique prefix is computed at most once; subsequent queries
  * return the cached result.  Old entries are evicted automatically.
  */
 export function trieCache(
-  model: PlainLanguageModel<Uint8Array, number>,
-): PlainLanguageModel<Uint8Array, number> {
-  const cache = createTrieCache<readonly PlainTokenProb<number>[]>();
+  model: LanguageModel<Uint8Array, number>,
+): LanguageModel<Uint8Array, number> {
+  const cache = createTrieCache<readonly TokenProb<number>[]>();
   return async (prefix: Uint8Array) => {
     const cached = cache.get(prefix);
     if (cached !== undefined) return cached;
@@ -504,8 +504,8 @@ export function trieCache(
  * would violate UTF-8 encoding rules, and renormalise the distribution.
  */
 export function forceCleanUtf8(
-  model: PlainLanguageModel<Uint8Array, number>,
-): PlainLanguageModel<Uint8Array, number> {
+  model: LanguageModel<Uint8Array, number>,
+): LanguageModel<Uint8Array, number> {
   return async (prefix: Uint8Array) => {
     const dist = await model(prefix);
     const isLegal = legalUtf8NextByte(prefix);
