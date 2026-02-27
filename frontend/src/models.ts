@@ -61,10 +61,61 @@ function decodeUtf8Bytes(bytes: number[]): number {
 // Multi-byte expansion
 // ---------------------------------------------------------------------------
 
-type ByteLevelModel = (
+export type ByteLevelModel = (
   bytePrefix: Uint8Array,
   minProb: number,
 ) => Promise<number[]>;
+
+/**
+ * Thread a `minProb` parameter through a chain of LanguageModel adapters.
+ *
+ * `trieCache` and `forceCleanUtf8` operate on `LanguageModel` (prefix-only,
+ * returns `TokenProb[]`), but `ByteLevelModel` carries an extra `minProb`
+ * hint.  This adapter bridges the two:
+ *
+ *   1. Wraps `inner` (a ByteLevelModel) as a LanguageModel, converting
+ *      the 256-element array to TokenProb[] and capturing minProb via closure.
+ *   2. Lets `adapt` compose arbitrary LanguageModel→LanguageModel transforms.
+ *   3. Wraps the result back into a ByteLevelModel.
+ *
+ * The minProb value is captured synchronously when the returned function is
+ * called, before any awaits in the adapter chain, so concurrent calls with
+ * different minProb values are safe.
+ *
+ * Usage:
+ *   fromByteLevelModel(passMinProb(m => trieCache(forceCleanUtf8(m)), predictBytes))
+ */
+export function passMinProb(
+  adapt: (
+    model: LanguageModel<Uint8Array, number>,
+  ) => LanguageModel<Uint8Array, number>,
+  inner: ByteLevelModel,
+): ByteLevelModel {
+  let currentMinProb = 0;
+
+  const asLanguageModel: LanguageModel<Uint8Array, number> = async (prefix) => {
+    const dist = await inner(prefix, currentMinProb);
+    const result: TokenProb<number>[] = [];
+    for (let i = 0; i < dist.length; i++) {
+      if (dist[i] > 0) {
+        result.push({ token: i, probability: dist[i] });
+      }
+    }
+    return result;
+  };
+
+  const adapted = adapt(asLanguageModel);
+
+  return async (prefix, minProb) => {
+    currentMinProb = minProb;
+    const probs = await adapted(prefix);
+    const dist: number[] = new Array(256).fill(0);
+    for (const { token, probability } of probs) {
+      dist[token] = probability;
+    }
+    return dist;
+  };
+}
 
 /**
  * Recursively expand a partial UTF-8 sequence into filtered TokenCDFExtent entries
