@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { CDFView, Cursor } from "./types";
+import type { CDFView, Cursor, TokenCDFExtent } from "./types";
 import { adaptModel } from "./types";
 import { normalizeCursor, cursorToGlobal } from "./cursor";
 
@@ -7,60 +7,42 @@ import { normalizeCursor, cursorToGlobal } from "./cursor";
 // Test language models
 // ---------------------------------------------------------------------------
 
+// Token constants for readability.
+const A = 0;
+const B = 1;
+const Y = 1;
+
 /** Uniform binary: A and B each with probability 0.5. */
-const binary = adaptModel<readonly string[], string>(async () => [
-  { token: "A", probability: 0.5 },
-  { token: "B", probability: 0.5 },
-]);
+const binary = adaptModel<readonly number[]>(async () => [0.5, 0.5]);
 
 /** Asymmetric binary: A = 0.8, B = 0.2. */
-const asym = adaptModel<readonly string[], string>(async () => [
-  { token: "A", probability: 0.8 },
-  { token: "B", probability: 0.2 },
-]);
+const asym = adaptModel<readonly number[]>(async () => [0.8, 0.2]);
 
 /** Three tokens. */
-const ternary = adaptModel<readonly string[], string>(async () => [
-  { token: "X", probability: 0.2 },
-  { token: "Y", probability: 0.5 },
-  { token: "Z", probability: 0.3 },
-]);
+const ternary = adaptModel<readonly number[]>(async () => [0.2, 0.5, 0.3]);
 
 /** Context-sensitive: distribution depends on the last token. */
-const contextual = adaptModel<readonly string[], string>(async (prefix) => {
-  if (prefix.length === 0)
-    return [
-      { token: "A", probability: 0.6 },
-      { token: "B", probability: 0.4 },
-    ];
-  if (prefix[prefix.length - 1] === "A")
-    return [
-      { token: "A", probability: 0.3 },
-      { token: "B", probability: 0.7 },
-    ];
-  return [
-    { token: "A", probability: 0.5 },
-    { token: "B", probability: 0.5 },
-  ];
+const contextual = adaptModel<readonly number[]>(async (prefix) => {
+  if (prefix.length === 0) return [0.6, 0.4];
+  if (prefix[prefix.length - 1] === A) return [0.3, 0.7];
+  return [0.5, 0.5];
 });
 
 /** Deterministic: single token with probability 1. */
-const deterministic = adaptModel<readonly string[], string>(async () => [
-  { token: "A", probability: 1.0 },
-]);
+const deterministic = adaptModel<readonly number[]>(async () => [1.0]);
 
 /** Empty distribution — no continuations. */
-const empty = adaptModel<readonly string[], string>(async () => []);
+const empty = adaptModel<readonly number[]>(async () => []);
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 /** Assert that two cursor states point at the same global location. */
-async function expectSameGlobal<T>(
-  model: CDFView<readonly T[], T>,
-  a: Cursor<T>,
-  b: Cursor<T>,
+async function expectSameGlobal(
+  model: CDFView<readonly number[], number>,
+  a: Cursor<number>,
+  b: Cursor<number>,
 ) {
   const ga = await cursorToGlobal(model, a);
   const gb = await cursorToGlobal(model, b);
@@ -84,19 +66,19 @@ describe("normalizeCursor", () => {
     });
 
     it("non-empty prefix is preserved", async () => {
-      const r = await normalizeCursor(binary, { prefix: ["A"], x: 0, y: 0 });
-      expect(r.prefix).toEqual(["A"]);
+      const r = await normalizeCursor(binary, { prefix: [A], x: 0, y: 0 });
+      expect(r.prefix).toEqual([A]);
       expect(r.x).toBe(0);
       expect(r.y).toBe(0);
     });
 
     it("deep prefix is preserved", async () => {
       const r = await normalizeCursor(binary, {
-        prefix: ["A", "B", "A"],
+        prefix: [A, B, A],
         x: 0,
         y: 0,
       });
-      expect(r.prefix).toEqual(["A", "B", "A"]);
+      expect(r.prefix).toEqual([A, B, A]);
       expect(r.x).toBe(0);
       expect(r.y).toBe(0);
     });
@@ -109,7 +91,7 @@ describe("normalizeCursor", () => {
       // Binary: A occupies x∈[0.5,1], y∈[0,0.5)
       // Cursor at (0.7, 0.3): inside A.
       const r = await normalizeCursor(binary, { prefix: [], x: 0.7, y: 0.3 });
-      expect(r.prefix).toEqual(["A"]);
+      expect(r.prefix).toEqual([A]);
       expect(r.x).toBeCloseTo(0.4); // (0.7−0.5)/0.5
       expect(r.y).toBeCloseTo(0.6); // 0.3/0.5
     });
@@ -117,7 +99,7 @@ describe("normalizeCursor", () => {
     it("descends one level into the second child (binary)", async () => {
       // B occupies x∈[0.5,1], y∈[0.5,1)
       const r = await normalizeCursor(binary, { prefix: [], x: 0.6, y: 0.7 });
-      expect(r.prefix).toEqual(["B"]);
+      expect(r.prefix).toEqual([B]);
       expect(r.x).toBeCloseTo(0.2); // (0.6−0.5)/0.5
       expect(r.y).toBeCloseTo(0.4); // (0.7−0.5)/0.5
     });
@@ -126,7 +108,7 @@ describe("normalizeCursor", () => {
       // x=0.9, y=0.1.  Each step enters A (p=0.5).
       //   → (0.8, 0.2) → (0.6, 0.4) → (0.2, 0.8)  x<0.5 → stop
       const r = await normalizeCursor(binary, { prefix: [], x: 0.9, y: 0.1 });
-      expect(r.prefix).toEqual(["A", "A", "A"]);
+      expect(r.prefix).toEqual([A, A, A]);
       expect(r.x).toBeCloseTo(0.2);
       expect(r.y).toBeCloseTo(0.8);
     });
@@ -135,7 +117,7 @@ describe("normalizeCursor", () => {
       // Ternary: X=0.2 y∈[0,0.2), Y=0.5 y∈[0.2,0.7), Z=0.3 y∈[0.7,1)
       // Cursor at (0.6, 0.4) — should land in Y (x≥0.5, y∈[0.2,0.7)).
       const r = await normalizeCursor(ternary, { prefix: [], x: 0.6, y: 0.4 });
-      expect(r.prefix).toEqual(["Y"]);
+      expect(r.prefix).toEqual([Y]);
       expect(r.x).toBeCloseTo((0.6 - 0.5) / 0.5); // 0.2
       expect(r.y).toBeCloseTo((0.4 - 0.2) / 0.5); // 0.4
     });
@@ -152,7 +134,7 @@ describe("normalizeCursor", () => {
         x: 0.7,
         y: 0.2,
       });
-      expect(r.prefix).toEqual(["A", "B"]);
+      expect(r.prefix).toEqual([A, B]);
       expect(r.x).toBeCloseTo(2 / 7);
       expect(r.y).toBeCloseTo(1 / 21);
     });
@@ -164,7 +146,7 @@ describe("normalizeCursor", () => {
       // enter A again →         x=(0.21875−0.2)/0.8≈0.0234, y=0.78125/0.8≈0.977
       // x<0.2 → stop.
       const r = await normalizeCursor(asym, { prefix: [], x: 0.5, y: 0.5 });
-      expect(r.prefix).toEqual(["A", "A", "A"]);
+      expect(r.prefix).toEqual([A, A, A]);
       expect(r.x).toBeCloseTo(0.0234375);
       expect(r.y).toBeCloseTo(0.9765625);
     });
@@ -183,11 +165,11 @@ describe("normalizeCursor", () => {
 
     it("stays in a non-root square when in its gap", async () => {
       const r = await normalizeCursor(binary, {
-        prefix: ["A"],
+        prefix: [A],
         x: 0.3,
         y: 0.3,
       });
-      expect(r.prefix).toEqual(["A"]);
+      expect(r.prefix).toEqual([A]);
       expect(r.x).toBe(0.3);
       expect(r.y).toBe(0.3);
     });
@@ -197,41 +179,41 @@ describe("normalizeCursor", () => {
 
   describe("ascent", () => {
     it("ascends and enters the next sibling on y overflow", async () => {
-      // prefix=['A'], y=1.1 → leave A, enter B.
+      // prefix=[A], y=1.1 → leave A, enter B.
       // Ascend: x=0.5+0.3·0.5=0.65, y=0+1.1·0.5=0.55
       // B: x≥0.5, y∈[0.5,1) → enter B.
       //   x=(0.65−0.5)/0.5=0.3, y=(0.55−0.5)/0.5=0.1
       const r = await normalizeCursor(binary, {
-        prefix: ["A"],
+        prefix: [A],
         x: 0.3,
         y: 1.1,
       });
-      expect(r.prefix).toEqual(["B"]);
+      expect(r.prefix).toEqual([B]);
       expect(r.x).toBeCloseTo(0.3);
       expect(r.y).toBeCloseTo(0.1);
     });
 
     it("ascends and enters the previous sibling on y underflow", async () => {
-      // prefix=['B'], y=−0.1 → leave B, enter A.
+      // prefix=[B], y=−0.1 → leave B, enter A.
       // Ascend: x=0.5+0.3·0.5=0.65, y=0.5+(−0.1)·0.5=0.45
       // A: x≥0.5, y∈[0,0.5) → enter A.
       //   x=(0.65−0.5)/0.5=0.3, y=0.45/0.5=0.9
       const r = await normalizeCursor(binary, {
-        prefix: ["B"],
+        prefix: [B],
         x: 0.3,
         y: -0.1,
       });
-      expect(r.prefix).toEqual(["A"]);
+      expect(r.prefix).toEqual([A]);
       expect(r.x).toBeCloseTo(0.3);
       expect(r.y).toBeCloseTo(0.9);
     });
 
     it("ascends to the gap on x underflow", async () => {
-      // prefix=['A'], x=−0.1 → leave A.
+      // prefix=[A], x=−0.1 → leave A.
       // Ascend: x=0.5+(−0.1)·0.5=0.45, y=0+0.3·0.5=0.15
       // x=0.45 < 0.5 — in the root's gap.
       const r = await normalizeCursor(binary, {
-        prefix: ["A"],
+        prefix: [A],
         x: -0.1,
         y: 0.3,
       });
@@ -241,9 +223,9 @@ describe("normalizeCursor", () => {
     });
 
     it("ascends multiple levels if needed", async () => {
-      // prefix=['A','A'], y=−0.2.  First ascend to ['A'], then
+      // prefix=[A,A], y=−0.2.  First ascend to [A], then
       // y is still < 0, so ascend again to [].
-      // Step 1: A (in ['A'] dist) has cum=0, prob=0.5
+      // Step 1: A (in [A] dist) has cum=0, prob=0.5
       //   x = 0.5 + 0.3·0.5 = 0.65,  y = 0 + (−0.2)·0.5 = −0.1
       // Step 2: still y<0. A (in root dist) has cum=0, prob=0.5
       //   x = 0.5 + 0.65·0.5 = 0.825,  y = 0 + (−0.1)·0.5 = −0.05
@@ -254,11 +236,11 @@ describe("normalizeCursor", () => {
       //   x=(0.65−0.5)/0.5=0.3, y=0
       // In AA: x=0.3 < 0.5 → stop.
       const r = await normalizeCursor(binary, {
-        prefix: ["A", "A"],
+        prefix: [A, A],
         x: 0.3,
         y: -0.2,
       });
-      expect(r.prefix).toEqual(["A", "A"]);
+      expect(r.prefix).toEqual([A, A]);
       expect(r.x).toBeCloseTo(0.3);
       expect(r.y).toBeCloseTo(0);
     });
@@ -269,8 +251,8 @@ describe("normalizeCursor", () => {
   describe("global position preservation", () => {
     const cases: Array<{
       name: string;
-      model: CDFView<readonly string[], string>;
-      state: Cursor<string>;
+      model: CDFView<readonly number[], number>;
+      state: Cursor<number>;
     }> = [
       {
         name: "simple descent",
@@ -285,17 +267,17 @@ describe("normalizeCursor", () => {
       {
         name: "ascend + re-descend (y overflow)",
         model: binary,
-        state: { prefix: ["A"], x: 0.3, y: 1.1 },
+        state: { prefix: [A], x: 0.3, y: 1.1 },
       },
       {
         name: "ascend + re-descend (y underflow)",
         model: binary,
-        state: { prefix: ["B"], x: 0.3, y: -0.1 },
+        state: { prefix: [B], x: 0.3, y: -0.1 },
       },
       {
         name: "ascend to gap",
         model: binary,
-        state: { prefix: ["A"], x: -0.1, y: 0.3 },
+        state: { prefix: [A], x: -0.1, y: 0.3 },
       },
       {
         name: "asymmetric deep descent",
@@ -315,7 +297,7 @@ describe("normalizeCursor", () => {
       {
         name: "already normalised",
         model: binary,
-        state: { prefix: ["A"], x: 0.3, y: 0.3 },
+        state: { prefix: [A], x: 0.3, y: 0.3 },
       },
     ];
 
@@ -344,7 +326,7 @@ describe("normalizeCursor", () => {
         { maxDepth: 5 },
       );
       expect(r.prefix).toHaveLength(5);
-      expect(r.prefix).toEqual(["A", "A", "A", "A", "A"]);
+      expect(r.prefix).toEqual([A, A, A, A, A]);
       // x and y are unchanged because p=1: (x−0)/1 = x each step.
       expect(r.x).toBeCloseTo(0.5);
       expect(r.y).toBeCloseTo(0.5);
@@ -362,7 +344,7 @@ describe("normalizeCursor", () => {
     it("handles cursor exactly on the y boundary between tokens", async () => {
       // y = 0.5 exactly: top boundary of B (inclusive), not A.
       const r = await normalizeCursor(binary, { prefix: [], x: 0.7, y: 0.5 });
-      expect(r.prefix).toEqual(["B"]);
+      expect(r.prefix).toEqual([B]);
     });
   });
 
@@ -370,14 +352,11 @@ describe("normalizeCursor", () => {
 
   describe("generic token types", () => {
     it("works with numeric tokens", async () => {
-      const numModel = adaptModel<readonly number[], number>(async () => [
-        { token: 1, probability: 0.4 },
-        { token: 2, probability: 0.6 },
-      ]);
-      // Token 1: x∈[0.6,1] y∈[0,0.4).  Token 2: x∈[0.4,1] y∈[0.4,1).
-      // (0.5, 0.5): token 1 x≥0.6? no.  token 2 x≥0.4 and y∈[0.4,1)? yes.
+      const numModel = adaptModel<readonly number[]>(async () => [0.4, 0.6]);
+      // Token 0: x∈[0.6,1] y∈[0,0.4).  Token 1: x∈[0.4,1] y∈[0.4,1).
+      // (0.5, 0.5): token 0 x≥0.6? no.  token 1 x≥0.4 and y∈[0.4,1)? yes.
       const r = await normalizeCursor(numModel, { prefix: [], x: 0.5, y: 0.5 });
-      expect(r.prefix).toEqual([2]);
+      expect(r.prefix).toEqual([1]);
       expect(r.x).toBeCloseTo(1 / 6);
       expect(r.y).toBeCloseTo(1 / 6);
     });
@@ -386,10 +365,28 @@ describe("normalizeCursor", () => {
       type Tok = { id: number };
       const tok1: Tok = { id: 1 };
       const tok2: Tok = { id: 2 };
-      const objModel = adaptModel<readonly Tok[], Tok>(async () => [
-        { token: tok1, probability: 0.5 },
-        { token: tok2, probability: 0.5 },
-      ]);
+      const objModel: CDFView<readonly Tok[], Tok> = async function* (
+        _prefix,
+        _rangeStart,
+        _rangeEnd,
+        _minProb,
+        specificToken?,
+      ) {
+        const entries: TokenCDFExtent<Tok>[] = [
+          { token: tok1, start: 0, end: 0.5 },
+          { token: tok2, start: 0.5, end: 1 },
+        ];
+        for (const entry of entries) {
+          if (specificToken !== undefined) {
+            if (entry.token === specificToken) {
+              yield entry;
+              return;
+            }
+            continue;
+          }
+          yield entry;
+        }
+      };
 
       // prefix=[tok1], y=1.1 → ascend, enter tok2.
       const r = await normalizeCursor(objModel, {
@@ -424,14 +421,14 @@ describe("cursorToGlobal", () => {
 
   it("prefix=[A] with (0,0) maps to A's top-left corner", async () => {
     // Binary: A has size 0.5, left edge at 0.5, top edge at 0.
-    const g = await cursorToGlobal(binary, { prefix: ["A"], x: 0, y: 0 });
+    const g = await cursorToGlobal(binary, { prefix: [A], x: 0, y: 0 });
     expect(g.x).toBeCloseTo(0.5);
     expect(g.y).toBeCloseTo(0);
   });
 
   it("prefix=[B] with (0,0) maps to B's top-left corner", async () => {
     // Binary: B has size 0.5, left edge at 0.5, top edge at 0.5.
-    const g = await cursorToGlobal(binary, { prefix: ["B"], x: 0, y: 0 });
+    const g = await cursorToGlobal(binary, { prefix: [B], x: 0, y: 0 });
     expect(g.x).toBeCloseTo(0.5);
     expect(g.y).toBeCloseTo(0.5);
   });
@@ -441,7 +438,7 @@ describe("cursorToGlobal", () => {
     // A square: size=0.8, top=0.
     // In A's dist, B: cum=0.8, prob=0.2 → AB square: size=0.16, top=0+0.8·0.8=0.64.
     // (0, 0) → global (1−0.16, 0.64) = (0.84, 0.64).
-    const g = await cursorToGlobal(asym, { prefix: ["A", "B"], x: 0, y: 0 });
+    const g = await cursorToGlobal(asym, { prefix: [A, B], x: 0, y: 0 });
     expect(g.x).toBeCloseTo(0.84);
     expect(g.y).toBeCloseTo(0.64);
   });

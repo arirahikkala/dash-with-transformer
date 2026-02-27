@@ -12,7 +12,6 @@ import {
   first,
   type CDFView,
   type LanguageModel,
-  type TokenProb,
   type TokenCDFExtent,
 } from "./types";
 
@@ -62,14 +61,14 @@ function decodeUtf8Bytes(bytes: number[]): number {
 // ---------------------------------------------------------------------------
 
 /**
- * A byte-level language model.  Returns exactly 256 entries (bytes 0–255)
- * in order, including zero-probability bytes.  Callers may index the result
- * by byte value directly.
+ * A byte-level language model.  Returns exactly 256 probabilities (bytes
+ * 0–255) in order, including zero-probability bytes.  `dist[b]` is the
+ * probability of byte `b`.
  */
 export type ByteLevelModel = (
   bytePrefix: Uint8Array,
   minProb: number,
-) => Promise<readonly TokenProb<number>[]>;
+) => Promise<readonly number[]>;
 
 /**
  * Thread a `minProb` parameter through a chain of LanguageModel adapters.
@@ -87,9 +86,7 @@ export type ByteLevelModel = (
  *   fromByteLevelModel(passMinProb(m => trieCache(forceCleanUtf8(m)))(predictBytes))
  */
 export function passMinProb(
-  adapt: (
-    model: LanguageModel<Uint8Array, number>,
-  ) => LanguageModel<Uint8Array, number>,
+  adapt: (model: LanguageModel<Uint8Array>) => LanguageModel<Uint8Array>,
 ): (inner: ByteLevelModel) => ByteLevelModel {
   return (inner) => {
     let currentMinProb = 0;
@@ -114,7 +111,7 @@ export function passMinProb(
  * All continuation queries at the same depth run in parallel.
  */
 async function* expandMultiByte(
-  model: (prefix: Uint8Array, minProb: number) => Promise<number[]>,
+  model: (prefix: Uint8Array, minProb: number) => Promise<readonly number[]>,
   bytePrefix: Uint8Array,
   partialBytes: number[],
   totalBytes: number,
@@ -178,7 +175,7 @@ async function* expandMultiByte(
  * zero probability at any byte level.
  */
 async function lookupSpecificToken(
-  model: (prefix: Uint8Array, minProb: number) => Promise<number[]>,
+  model: (prefix: Uint8Array, minProb: number) => Promise<readonly number[]>,
   bytePrefix: Uint8Array,
   codepoint: number,
 ): Promise<TokenCDFExtent<number> | null> {
@@ -243,15 +240,6 @@ async function lookupSpecificToken(
 export function fromByteLevelModel(
   byteLevelModel: ByteLevelModel,
 ): CDFView<readonly number[], number> {
-  // Extract the probability column from the full ordered TokenProb[] array.
-  const rawModel = async (
-    prefix: Uint8Array,
-    minProb: number,
-  ): Promise<number[]> => {
-    const probs = await byteLevelModel(prefix, minProb);
-    return probs.map(({ probability }) => probability);
-  };
-
   return async function* (
     prefix: readonly number[],
     rangeStart: number,
@@ -264,7 +252,7 @@ export function fromByteLevelModel(
     // Fast path: look up a single codepoint's extent.
     if (specificToken !== undefined) {
       const result = await lookupSpecificToken(
-        rawModel,
+        byteLevelModel,
         bytePrefix,
         specificToken,
       );
@@ -273,7 +261,7 @@ export function fromByteLevelModel(
     }
 
     // 1. First-byte distribution (1 model call).
-    const firstByteDist = await rawModel(bytePrefix, minProb);
+    const firstByteDist = await byteLevelModel(bytePrefix, minProb);
 
     // 2. Cumulative start position for every first-byte group.
     //    P(all codepoints starting with byte b) = P(b), so the
@@ -314,7 +302,7 @@ export function fromByteLevelModel(
 
       expansions.push(
         expandMultiByte(
-          rawModel,
+          byteLevelModel,
           bytePrefix,
           [b],
           totalBytes,
@@ -531,9 +519,9 @@ function legalUtf8NextByte(prefix: Uint8Array): (byte: number) => boolean {
  * return the cached result.  Old entries are evicted automatically.
  */
 export function trieCache(
-  model: LanguageModel<Uint8Array, number>,
-): LanguageModel<Uint8Array, number> {
-  const cache = createTrieCache<readonly TokenProb<number>[]>();
+  model: LanguageModel<Uint8Array>,
+): LanguageModel<Uint8Array> {
+  const cache = createTrieCache<readonly number[]>();
   return async (prefix: Uint8Array) => {
     const cached = cache.get(prefix);
     if (cached !== undefined) return cached;
@@ -548,22 +536,18 @@ export function trieCache(
  * would violate UTF-8 encoding rules, and renormalise the distribution.
  */
 export function forceCleanUtf8(
-  model: LanguageModel<Uint8Array, number>,
-): LanguageModel<Uint8Array, number> {
+  model: LanguageModel<Uint8Array>,
+): LanguageModel<Uint8Array> {
   return async (prefix: Uint8Array) => {
     const dist = await model(prefix);
     const isLegal = legalUtf8NextByte(prefix);
 
     let total = 0;
-    for (const { token, probability } of dist) {
-      if (isLegal(token)) total += probability;
+    for (let b = 0; b < dist.length; b++) {
+      if (isLegal(b)) total += dist[b];
     }
-    if (total === 0)
-      return dist.map(({ token }) => ({ token, probability: 0 }));
+    if (total === 0) return dist.map(() => 0);
 
-    return dist.map(({ token, probability }) => ({
-      token,
-      probability: isLegal(token) ? probability / total : 0,
-    }));
+    return dist.map((p, b) => (isLegal(b) ? p / total : 0));
   };
 }

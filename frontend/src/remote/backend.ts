@@ -6,7 +6,6 @@
 
 import { showErrorToast } from "../toast";
 import { createTrieCache, type TrieCache } from "../trie-cache";
-import type { TokenProb } from "../types";
 
 // ---------------------------------------------------------------------------
 // Request compression
@@ -32,26 +31,20 @@ interface TrieResponse {
 // Batched requests
 // ---------------------------------------------------------------------------
 
-type TokenProbs = readonly TokenProb<number>[];
-
-function distToTokenProbs(dist: number[]): TokenProbs {
-  return dist.map((probability, token) => ({ token, probability }));
-}
-
 interface PendingRequest {
   prefix: Uint8Array;
   minProb: number;
-  resolve: (dist: TokenProbs) => void;
+  resolve: (dist: readonly number[]) => void;
   reject: (err: Error) => void;
 }
 
 export interface BackendClient {
-  predictBytes(prefix: Uint8Array, minProb: number): Promise<TokenProbs>;
+  predictBytes(prefix: Uint8Array, minProb: number): Promise<readonly number[]>;
 }
 
 export function createBackendClient(backendUrl: string): BackendClient {
   const predictUrl = `${backendUrl}/predict`;
-  const cache: TrieCache<Promise<TokenProbs>> = createTrieCache();
+  const cache: TrieCache<Promise<readonly number[]>> = createTrieCache();
   let pending: PendingRequest[] = [];
   let flushScheduled = false;
 
@@ -61,9 +54,7 @@ export function createBackendClient(backendUrl: string): BackendClient {
       const childPrefix = new Uint8Array(prefix.length + 1);
       childPrefix.set(prefix);
       childPrefix[prefix.length] = byte;
-      cache.getOrSet(childPrefix, () =>
-        Promise.resolve(distToTokenProbs(childTrie.dist)),
-      );
+      cache.getOrSet(childPrefix, () => Promise.resolve(childTrie.dist));
       populateTrieCache(childPrefix, childTrie);
     }
   }
@@ -102,7 +93,7 @@ export function createBackendClient(backendUrl: string): BackendClient {
       };
       for (let i = 0; i < batch.length; i++) {
         const trie = predictions[i];
-        batch[i].resolve(distToTokenProbs(trie.dist));
+        batch[i].resolve(trie.dist);
         populateTrieCache(batch[i].prefix, trie);
       }
     } catch (err) {
@@ -118,10 +109,10 @@ export function createBackendClient(backendUrl: string): BackendClient {
   function predictBytes(
     prefix: Uint8Array,
     minProb: number,
-  ): Promise<TokenProbs> {
+  ): Promise<readonly number[]> {
     const cached = cache.get(prefix);
     if (cached) return cached;
-    const promise = new Promise<TokenProbs>((resolve, reject) => {
+    const promise = new Promise<readonly number[]>((resolve, reject) => {
       pending.push({
         prefix,
         minProb: minProb,

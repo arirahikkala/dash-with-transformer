@@ -555,14 +555,13 @@ class LSTMWorkerPool {
 
 // ---------- Public API ----------
 
-import type { TokenProb } from "../types";
 import { createTrieCache } from "../trie-cache";
 
 export async function createCachedLSTMPredictor(
   urlPrefix: string,
   onProgress?: (msg: string) => void,
 ): Promise<{
-  predict: (prefix: Uint8Array) => Promise<readonly TokenProb<number>[]>;
+  predict: (prefix: Uint8Array) => Promise<readonly number[]>;
   dispose: () => void;
 }> {
   onProgress?.("Loading LSTM model\u2026");
@@ -578,9 +577,7 @@ export async function createCachedLSTMPredictor(
 
   onProgress?.("Ready!");
 
-  async function predict(
-    prefix: Uint8Array,
-  ): Promise<readonly TokenProb<number>[]> {
+  async function predict(prefix: Uint8Array): Promise<readonly number[]> {
     // Find longest cached prefix
     let ancestorState: LSTMState | null = null;
     let cachedLen = 0;
@@ -600,7 +597,7 @@ export async function createCachedLSTMPredictor(
       // Empty prefix: reset state, get logits
       const { logits } = await pool.predict(null, []);
       const probs = softmax(logits);
-      return toPlainProbs(probs);
+      return Array.from(probs);
     }
 
     if (remainingBytes.length === 0) {
@@ -608,7 +605,7 @@ export async function createCachedLSTMPredictor(
       // Send a predict with no new bytes.
       const { logits } = await pool.predict(ancestorState, []);
       const probs = softmax(logits);
-      return toPlainProbs(probs);
+      return Array.from(probs);
     }
 
     const { states, logits } = await pool.predict(
@@ -622,15 +619,11 @@ export async function createCachedLSTMPredictor(
     }
 
     const probs = softmax(logits);
-    return toPlainProbs(probs);
+    return Array.from(probs);
   }
 
   return {
     predict,
     dispose: () => pool.dispose(),
   };
-}
-
-function toPlainProbs(probs: Float32Array): TokenProb<number>[] {
-  return Array.from(probs, (probability, token) => ({ token, probability }));
 }

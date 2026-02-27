@@ -5,12 +5,7 @@ import {
   interpolate,
   type ByteLevelModel,
 } from "./models";
-import {
-  adaptModel,
-  type CDFView,
-  type LanguageModel,
-  type TokenProb,
-} from "./types";
+import { adaptModel, type CDFView, type LanguageModel } from "./types";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -41,18 +36,13 @@ function prefixKey(buf: Uint8Array): string {
     .join("");
 }
 
-/** Convert a 256-element probability array to a full ordered TokenProb[]. */
-function distToTokenProbs(dist: number[]): readonly TokenProb<number>[] {
-  return dist.map((probability, token) => ({ token, probability }));
-}
-
 /** Create a mock byte-level model from a hex-key → dist table. */
 function makeMockModel(table: Record<string, number[]>): ByteLevelModel {
   return async (prefix: Uint8Array) => {
     const key = prefixKey(prefix);
     const result = table[key];
     if (!result) throw new Error(`Unexpected byte prefix: "${key}"`);
-    return distToTokenProbs(result);
+    return result;
   };
 }
 
@@ -67,7 +57,7 @@ function makeTrackingModel(table: Record<string, number[]>): {
     calls.push(key);
     const result = table[key];
     if (!result) throw new Error(`Unexpected byte prefix: "${key}"`);
-    return distToTokenProbs(result);
+    return result;
   };
   return { model, calls };
 }
@@ -535,7 +525,7 @@ describe("parallelism", () => {
       // Yield so concurrent calls can register.
       await new Promise((resolve) => setTimeout(resolve, 0));
       activeCalls--;
-      return distToTokenProbs(table[key]!);
+      return table[key]!;
     };
 
     const lm = fromByteLevelModel(model);
@@ -668,21 +658,13 @@ describe("edge cases", () => {
 
 describe("interpolate", () => {
   /** Create a model that always returns the given distribution (ignores prefix). */
-  function simpleModel(
-    dist: { token: number; probability: number }[],
-  ): CDFView<string, number> {
+  function simpleModel(dist: number[]): CDFView<string, number> {
     return adaptModel(async () => dist);
   }
 
   it("computes correct mixture probabilities", async () => {
-    const a = simpleModel([
-      { token: 1, probability: 0.75 },
-      { token: 2, probability: 0.25 },
-    ]);
-    const b = simpleModel([
-      { token: 1, probability: 0.25 },
-      { token: 2, probability: 0.75 },
-    ]);
+    const a = simpleModel([0, 0.75, 0.25]);
+    const b = simpleModel([0, 0.25, 0.75]);
 
     const mixed = interpolate([
       { model: a, weight: 1 },
@@ -698,14 +680,8 @@ describe("interpolate", () => {
   });
 
   it("weight=0 on B reproduces model A exactly", async () => {
-    const a = simpleModel([
-      { token: 1, probability: 0.6 },
-      { token: 2, probability: 0.4 },
-    ]);
-    const b = simpleModel([
-      { token: 1, probability: 0.1 },
-      { token: 2, probability: 0.9 },
-    ]);
+    const a = simpleModel([0, 0.6, 0.4]);
+    const b = simpleModel([0, 0.1, 0.9]);
 
     const mixed = interpolate([
       { model: a, weight: 1 },
@@ -722,14 +698,8 @@ describe("interpolate", () => {
   });
 
   it("weight=0 on A reproduces model B exactly", async () => {
-    const a = simpleModel([
-      { token: 1, probability: 0.6 },
-      { token: 2, probability: 0.4 },
-    ]);
-    const b = simpleModel([
-      { token: 1, probability: 0.3 },
-      { token: 2, probability: 0.7 },
-    ]);
+    const a = simpleModel([0, 0.6, 0.4]);
+    const b = simpleModel([0, 0.3, 0.7]);
 
     const mixed = interpolate([
       { model: a, weight: 0 },
@@ -746,16 +716,8 @@ describe("interpolate", () => {
   });
 
   it("produces contiguous entries summing to 1", async () => {
-    const a = simpleModel([
-      { token: 1, probability: 0.3 },
-      { token: 2, probability: 0.5 },
-      { token: 3, probability: 0.2 },
-    ]);
-    const b = simpleModel([
-      { token: 1, probability: 0.4 },
-      { token: 2, probability: 0.4 },
-      { token: 3, probability: 0.2 },
-    ]);
+    const a = simpleModel([0, 0.3, 0.5, 0.2]);
+    const b = simpleModel([0, 0.4, 0.4, 0.2]);
 
     const mixed = interpolate([
       { model: a, weight: 0.6 },
@@ -773,14 +735,8 @@ describe("interpolate", () => {
   });
 
   it("resolves tokens below minProb in one model via specificToken", async () => {
-    const a = simpleModel([
-      { token: 1, probability: 0.8 },
-      { token: 2, probability: 0.2 },
-    ]);
-    const b = simpleModel([
-      { token: 1, probability: 0.2 },
-      { token: 2, probability: 0.8 },
-    ]);
+    const a = simpleModel([0, 0.8, 0.2]);
+    const b = simpleModel([0, 0.2, 0.8]);
 
     const mixed = interpolate([
       { model: a, weight: 1 },
@@ -798,14 +754,8 @@ describe("interpolate", () => {
   });
 
   it("specificToken returns the correct entry", async () => {
-    const a = simpleModel([
-      { token: 1, probability: 0.75 },
-      { token: 2, probability: 0.25 },
-    ]);
-    const b = simpleModel([
-      { token: 1, probability: 0.25 },
-      { token: 2, probability: 0.75 },
-    ]);
+    const a = simpleModel([0, 0.75, 0.25]);
+    const b = simpleModel([0, 0.25, 0.75]);
 
     const mixed = interpolate([
       { model: a, weight: 1 },
@@ -819,14 +769,8 @@ describe("interpolate", () => {
   });
 
   it("respects minProb filtering", async () => {
-    const a = simpleModel([
-      { token: 1, probability: 0.8 },
-      { token: 2, probability: 0.2 },
-    ]);
-    const b = simpleModel([
-      { token: 1, probability: 0.8 },
-      { token: 2, probability: 0.2 },
-    ]);
+    const a = simpleModel([0, 0.8, 0.2]);
+    const b = simpleModel([0, 0.8, 0.2]);
 
     const mixed = interpolate([
       { model: a, weight: 1 },
@@ -842,14 +786,8 @@ describe("interpolate", () => {
   });
 
   it("respects range filtering", async () => {
-    const a = simpleModel([
-      { token: 1, probability: 0.5 },
-      { token: 2, probability: 0.5 },
-    ]);
-    const b = simpleModel([
-      { token: 1, probability: 0.5 },
-      { token: 2, probability: 0.5 },
-    ]);
+    const a = simpleModel([0, 0.5, 0.5]);
+    const b = simpleModel([0, 0.5, 0.5]);
 
     const mixed = interpolate([
       { model: a, weight: 1 },
@@ -866,9 +804,7 @@ describe("interpolate", () => {
     let activeCalls = 0;
     let maxConcurrency = 0;
 
-    const makeSlowModel = (
-      dist: readonly { token: number; probability: number }[],
-    ): CDFView<string, number> =>
+    const makeSlowModel = (dist: number[]): CDFView<string, number> =>
       adaptModel(async () => {
         activeCalls++;
         maxConcurrency = Math.max(maxConcurrency, activeCalls);
@@ -877,14 +813,8 @@ describe("interpolate", () => {
         return dist;
       });
 
-    const a = makeSlowModel([
-      { token: 1, probability: 0.5 },
-      { token: 2, probability: 0.5 },
-    ]);
-    const b = makeSlowModel([
-      { token: 1, probability: 0.5 },
-      { token: 2, probability: 0.5 },
-    ]);
+    const a = makeSlowModel([0, 0.5, 0.5]);
+    const b = makeSlowModel([0, 0.5, 0.5]);
 
     const mixed = interpolate([
       { model: a, weight: 1 },
@@ -906,126 +836,119 @@ describe("forceCleanUtf8", () => {
    * Each value is padded to a full 256-entry ordered distribution.
    */
   function makePlainModel(
-    table: Record<string, readonly TokenProb<number>[]>,
-  ): LanguageModel<Uint8Array, number> {
+    table: Record<string, Record<number, number>>,
+  ): LanguageModel<Uint8Array> {
     return async (prefix: Uint8Array) => {
       const key = prefixKey(prefix);
       const sparse = table[key];
       if (!sparse) throw new Error(`Unexpected prefix: "${key}"`);
-      const full: TokenProb<number>[] = Array.from({ length: 256 }, (_, i) => ({
-        token: i,
-        probability: 0,
-      }));
-      for (const { token, probability } of sparse) {
-        full[token] = { token, probability };
-      }
-      return full;
+      return makeDist(sparse);
     };
   }
 
   it("filters out continuation bytes at a character boundary and renormalises", async () => {
     const model = makePlainModel({
-      "": [
-        { token: 0x61, probability: 0.5 }, // 'a' — legal lead
-        { token: 0x80, probability: 0.25 }, // continuation — illegal at boundary
-        { token: 0xc3, probability: 0.25 }, // 2-byte lead — legal
-      ],
+      "": {
+        0x61: 0.5, // 'a' — legal lead
+        0x80: 0.25, // continuation — illegal at boundary
+        0xc3: 0.25, // 2-byte lead — legal
+      },
     });
     const dist = await forceCleanUtf8(model)(new Uint8Array([]));
 
     expect(dist).toHaveLength(256);
-    expect(dist[0x61].probability).toBeCloseTo(2 / 3);
-    expect(dist[0x80].probability).toBe(0);
-    expect(dist[0xc3].probability).toBeCloseTo(1 / 3);
+    expect(dist[0x61]).toBeCloseTo(2 / 3);
+    expect(dist[0x80]).toBe(0);
+    expect(dist[0xc3]).toBeCloseTo(1 / 3);
   });
 
   it("filters out lead bytes when a continuation byte is expected", async () => {
     // Prefix [0xC3] → mid-2-byte-sequence, need one continuation
     const model = makePlainModel({
-      c3: [
-        { token: 0xa9, probability: 0.5 }, // valid continuation
-        { token: 0x61, probability: 0.25 }, // ASCII — illegal here
-        { token: 0xc3, probability: 0.25 }, // lead — illegal here
-      ],
+      c3: {
+        0xa9: 0.5, // valid continuation
+        0x61: 0.25, // ASCII — illegal here
+        0xc3: 0.25, // lead — illegal here
+      },
     });
     const dist = await forceCleanUtf8(model)(new Uint8Array([0xc3]));
 
     expect(dist).toHaveLength(256);
-    expect(dist[0xa9].probability).toBeCloseTo(1.0);
-    expect(dist[0x61].probability).toBe(0);
-    expect(dist[0xc3].probability).toBe(0);
+    expect(dist[0xa9]).toBeCloseTo(1.0);
+    expect(dist[0x61]).toBe(0);
+    expect(dist[0xc3]).toBe(0);
   });
 
   it("enforces restricted range after E0 (rejects overlong encodings)", async () => {
     const model = makePlainModel({
-      e0: [
-        { token: 0x80, probability: 0.5 }, // < 0xA0 → overlong
-        { token: 0xa0, probability: 0.5 }, // legal
-      ],
+      e0: {
+        0x80: 0.5, // < 0xA0 → overlong
+        0xa0: 0.5, // legal
+      },
     });
     const dist = await forceCleanUtf8(model)(new Uint8Array([0xe0]));
 
     expect(dist).toHaveLength(256);
-    expect(dist[0x80].probability).toBe(0);
-    expect(dist[0xa0].probability).toBeCloseTo(1.0);
+    expect(dist[0x80]).toBe(0);
+    expect(dist[0xa0]).toBeCloseTo(1.0);
   });
 
   it("enforces restricted range after F0 and F4", async () => {
     // After F0: first continuation must be 0x90–0xBF
     const f0Model = makePlainModel({
-      f0: [
-        { token: 0x80, probability: 0.5 }, // too low
-        { token: 0x90, probability: 0.5 }, // legal
-      ],
+      f0: {
+        0x80: 0.5, // too low
+        0x90: 0.5, // legal
+      },
     });
     const f0Dist = await forceCleanUtf8(f0Model)(new Uint8Array([0xf0]));
     expect(f0Dist).toHaveLength(256);
-    expect(f0Dist[0x80].probability).toBe(0);
-    expect(f0Dist[0x90].probability).toBeCloseTo(1.0);
+    expect(f0Dist[0x80]).toBe(0);
+    expect(f0Dist[0x90]).toBeCloseTo(1.0);
 
     // After F4: first continuation must be 0x80–0x8F
     const f4Model = makePlainModel({
-      f4: [
-        { token: 0x80, probability: 0.5 }, // legal
-        { token: 0x90, probability: 0.5 }, // beyond U+10FFFF
-      ],
+      f4: {
+        0x80: 0.5, // legal
+        0x90: 0.5, // beyond U+10FFFF
+      },
     });
     const f4Dist = await forceCleanUtf8(f4Model)(new Uint8Array([0xf4]));
     expect(f4Dist).toHaveLength(256);
-    expect(f4Dist[0x80].probability).toBeCloseTo(1.0);
-    expect(f4Dist[0x90].probability).toBe(0);
+    expect(f4Dist[0x80]).toBeCloseTo(1.0);
+    expect(f4Dist[0x90]).toBe(0);
   });
 
   it("passes through an already-clean distribution unchanged", async () => {
     const model = makePlainModel({
-      "": [
-        { token: 0x61, probability: 0.5 },
-        { token: 0x62, probability: 0.5 },
-      ],
+      "": {
+        0x61: 0.5,
+        0x62: 0.5,
+      },
     });
     const dist = await forceCleanUtf8(model)(new Uint8Array([]));
 
     expect(dist).toHaveLength(256);
-    expect(dist[0x61]).toEqual({ token: 0x61, probability: 0.5 });
-    expect(dist[0x62]).toEqual({ token: 0x62, probability: 0.5 });
+    expect(dist[0x61]).toBe(0.5);
+    expect(dist[0x62]).toBe(0.5);
   });
 
   it("allows generic continuation bytes in later positions of a multi-byte sequence", async () => {
     // Prefix [0xE4, 0xB8] — 3-byte sequence, need one more continuation
     const model = makePlainModel({
-      e4b8: [
-        { token: 0x80, probability: 0.25 },
-        { token: 0xad, probability: 0.25 },
-        { token: 0xbf, probability: 0.25 },
-        { token: 0x61, probability: 0.25 }, // illegal: not a continuation
-      ],
+      e4b8: {
+        0x80: 0.25,
+        0xad: 0.25,
+        0xbf: 0.25,
+        0x61: 0.25, // illegal: not a continuation
+      },
     });
     const dist = await forceCleanUtf8(model)(new Uint8Array([0xe4, 0xb8]));
 
     expect(dist).toHaveLength(256);
-    expect(dist[0x80].probability).toBeCloseTo(1 / 3);
-    expect(dist[0xad].probability).toBeCloseTo(1 / 3);
-    expect(dist[0xbf].probability).toBeCloseTo(1 / 3);
-    expect(dist[0x61].probability).toBe(0);
+    expect(dist[0x80]).toBeCloseTo(1 / 3);
+    expect(dist[0xad]).toBeCloseTo(1 / 3);
+    expect(dist[0xbf]).toBeCloseTo(1 / 3);
+    expect(dist[0x61]).toBe(0);
   });
 });

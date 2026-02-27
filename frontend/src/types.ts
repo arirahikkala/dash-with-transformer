@@ -17,14 +17,6 @@ export interface TokenCDFExtent<T> {
 }
 
 /**
- * A plain token-probability pair, before cumulative extents are computed.
- */
-export interface TokenProb<T> {
-  readonly token: T;
-  readonly probability: number;
-}
-
-/**
  * A simple language model that returns a plain probability distribution
  * (without cumulative extents or filtering).  Use `adaptModel` to convert
  * to a full `CDFView`.
@@ -32,11 +24,10 @@ export interface TokenProb<T> {
  * Implementations must return the *full* next-token distribution: one entry
  * per token in the model's alphabet, in a fixed canonical order (e.g. byte
  * 0, 1, …, 255 for a byte-level model), including tokens with zero
- * probability.  Callers may rely on positional indexing and completeness.
+ * probability.  Callers may rely on positional indexing: `dist[t]` is the
+ * probability of token `t`.
  */
-export type LanguageModel<P, T> = (
-  prefix: P,
-) => Promise<readonly TokenProb<T>[]>;
+export type LanguageModel<P> = (prefix: P) => Promise<readonly number[]>;
 
 /**
  * Given a prefix and visibility constraints, finds the matching entries from the next-token distribution.
@@ -70,9 +61,7 @@ export type CDFView<P, T> = (
  * Adapt a simple probability-list model into a full CDFView
  * that computes cumulative extents and handles range/size filtering.
  */
-export function adaptModel<P, T>(
-  inner: (prefix: P) => Promise<readonly TokenProb<T>[]>,
-): CDFView<P, T> {
+export function adaptModel<P>(inner: LanguageModel<P>): CDFView<P, number> {
   return async function* (
     prefix,
     rangeStart,
@@ -82,20 +71,22 @@ export function adaptModel<P, T>(
   ) {
     const dist = await inner(prefix);
     let cum = 0;
-    for (const entry of dist) {
+    for (let token = 0; token < dist.length; token++) {
+      const probability = dist[token];
+      if (probability === 0) continue;
       const start = cum;
-      const end = cum + entry.probability;
+      const end = cum + probability;
       cum = end;
       if (specificToken !== undefined) {
-        if (entry.token === specificToken) {
-          yield { token: entry.token, start, end };
+        if (token === specificToken) {
+          yield { token, start, end };
           return;
         }
         continue;
       }
       if (end < rangeStart || start > rangeEnd) continue;
-      if (entry.probability < minProb) continue;
-      yield { token: entry.token, start, end };
+      if (probability < minProb) continue;
+      yield { token, start, end };
     }
   };
 }
