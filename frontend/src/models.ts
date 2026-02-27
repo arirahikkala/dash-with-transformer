@@ -521,14 +521,8 @@ function legalUtf8NextByte(prefix: Uint8Array): (byte: number) => boolean {
 export function trieCache(
   model: LanguageModel<Uint8Array>,
 ): LanguageModel<Uint8Array> {
-  const cache = createTrieCache<readonly number[]>();
-  return async (prefix: Uint8Array) => {
-    const cached = cache.get(prefix);
-    if (cached !== undefined) return cached;
-    const result = await model(prefix);
-    cache.set(prefix, result);
-    return result;
-  };
+  const cache = createTrieCache<Promise<readonly number[]>>();
+  return (prefix: Uint8Array) => cache.getOrSet(prefix, () => model(prefix));
 }
 
 /**
