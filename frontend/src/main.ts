@@ -60,9 +60,7 @@ async function main() {
   const backendUrlLabel = document.getElementById(
     "backend-url-label",
   ) as HTMLElement;
-  const webgpuStatusEl = document.getElementById(
-    "webgpu-status",
-  ) as HTMLElement;
+  const statusEl = document.getElementById("status") as HTMLElement;
   const backendUrlInput = document.getElementById(
     "backend-url",
   ) as HTMLInputElement;
@@ -75,12 +73,6 @@ async function main() {
   modelPrefixInput.value = remoteModelCallPrefix;
   modeSelect.value = mode;
 
-  // WebGPU model caching
-  let webgpuModel: LanguageModel<readonly number[], number> | null = null;
-  let webgpuLoadPromise: Promise<
-    LanguageModel<readonly number[], number>
-  > | null = null;
-
   // LSTM model caching
   let lstmModel: LanguageModel<readonly number[], number> | null = null;
   let lstmLoadPromise: Promise<
@@ -91,7 +83,7 @@ async function main() {
     const isBackend = mode === "backend";
     backendUrlLabel.style.display = isBackend ? "" : "none";
     prefixLabel.style.display = isBackend ? "" : "none";
-    webgpuStatusEl.style.display = isBackend ? "none" : "";
+    statusEl.style.display = isBackend ? "none" : "";
   }
 
   function updateHash() {
@@ -105,20 +97,6 @@ async function main() {
     window.location.hash = params.toString();
   }
 
-  async function loadWebGPUModel(): Promise<
-    LanguageModel<readonly number[], number>
-  > {
-    if (!webgpuLoadPromise) {
-      webgpuLoadPromise = import("./webgpu/smollm").then(({ loadSmolLM }) =>
-        loadSmolLM((msg) => {
-          webgpuStatusEl.textContent = msg;
-        }),
-      );
-    }
-    webgpuModel = await webgpuLoadPromise;
-    return webgpuModel;
-  }
-
   async function loadLSTMModel(): Promise<
     LanguageModel<readonly number[], number>
   > {
@@ -126,7 +104,7 @@ async function main() {
       lstmLoadPromise = (async () => {
         const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         const { predict } = await createCachedLSTMPredictor(base, (msg) => {
-          webgpuStatusEl.textContent = msg;
+          statusEl.textContent = msg;
         });
         const cleanModel = trieCache(forceCleanUtf8(predict));
         return fromByteLevelModel(async (prefix: Uint8Array) => {
@@ -166,11 +144,7 @@ async function main() {
     mode = modeSelect.value;
     updateModeUI();
     updateHash();
-    if (mode === "webgpu") {
-      const loaded = await loadWebGPUModel();
-      if (mode !== "webgpu") return;
-      model = loaded;
-    } else if (mode === "lstm") {
+    if (mode === "lstm") {
       const loaded = await loadLSTMModel();
       if (mode !== "lstm") return;
       model = loaded;
@@ -297,9 +271,7 @@ async function main() {
   }
 
   // Initialize model based on mode
-  if (mode === "webgpu") {
-    model = await loadWebGPUModel();
-  } else if (mode === "lstm") {
+  if (mode === "lstm") {
     model = await loadLSTMModel();
   }
 

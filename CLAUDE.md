@@ -48,7 +48,7 @@ Run `npm test` (or `npx vitest run`) in `frontend/` to execute the test suite. T
 - `render.ts` — `renderScene`: renders said content with a canvas renderer
 - `main.ts` — wires things together, displays widget, mouse-driven animation loop
 - `models.ts` — model-to-model adapters, most notably `fromByteLevelModel` which converts UTF-8 byte models to Unicode codepoint models
-- `lstm`, `webgpu`, `remote` — subdirectories for the (front-end) LSTM and WebGPU, and (backend) remote inference modes
+- `lstm`, `remote` — subdirectories for the (front-end) LSTM and (backend) remote inference modes
 
 ### Library-ish front-end code
 

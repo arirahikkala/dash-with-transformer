@@ -119,7 +119,7 @@
         border: 1px solid #ccc;
         border-radius: 3px;
       }
-      #webgpu-status {
+      #status {
         font-size: 0.85rem;
         color: #666;
         display: none;
@@ -145,13 +145,12 @@
       <label>Mode
         <select id="inference-mode">
           <option value="backend">Remote</option>
-          <option value="webgpu">WebGPU (Transformer)</option>
           <option value="lstm">CPU (LSTM)</option>
         </select>
       </label>
       <label id="backend-url-label">Backend URL <input id="backend-url" type="text" spellcheck="false" /></label>
     </div>
-    <div id="webgpu-status"></div>
+    <div id="status"></div>
     <label id="prefix-label">Prefix
       <textarea id="model-prefix" spellcheck="false"></textarea>
     </label>
