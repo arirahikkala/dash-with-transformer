@@ -1,11 +1,11 @@
 /**
  * A generic trie cache keyed on byte prefixes with generation-based eviction.
  *
- * Every access stamps all nodes along the root-to-leaf path with the current
- * generation.  Every `pruneInterval` generations, a DFS clips any subtree
- * whose root is older than `generation - maxAge`.  This is cheap (no sorting,
- * no size tracking) and preserves the hot neighbourhood around recently-
- * accessed prefixes.
+ * The generation counter advances only when a value is actually written (set
+ * or first computation in getOrSet).  Read-only accesses stamp the path with
+ * the current generation but don't bump it, making this closer to FIFO than
+ * LRU.  Every `pruneInterval` generations, a DFS clips any subtree whose root
+ * is older than `generation - maxAge`.
  */
 
 interface TrieNode<V> {
@@ -30,8 +30,8 @@ export interface TrieCache<V> {
 }
 
 export function createTrieCache<V>(
-  pruneInterval = 200_000,
-  maxAge = 400_000,
+  pruneInterval = 20_000,
+  maxAge = 40_000,
 ): TrieCache<V> {
   const root: TrieNode<V> = { children: new Map(), generation: 0 };
   let generation = 0;
@@ -91,7 +91,6 @@ export function createTrieCache<V>(
 
   return {
     get(prefix) {
-      tick();
       const node = walk(prefix);
       if (node && "value" in node) {
         return node.value;
@@ -106,11 +105,14 @@ export function createTrieCache<V>(
     },
 
     getOrSet(prefix, compute) {
+      // Try a read-only walk first to avoid bumping generation on cache hits.
+      const existing = walk(prefix);
+      if (existing && "value" in existing) {
+        return existing.value!;
+      }
+      // Cache miss — now tick and ensure the path exists.
       tick();
       const node = ensure(prefix);
-      if ("value" in node) {
-        return node.value!;
-      }
       const value = compute();
       node.value = value;
       return value;
@@ -124,7 +126,6 @@ export function createTrieCache<V>(
     },
 
     findLongestPrefix(prefix) {
-      tick();
       let node = root;
       touch(node);
       let best: { value: V; length: number } | undefined;

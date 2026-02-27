@@ -64,6 +64,17 @@ describe("createTrieCache", () => {
 });
 
 describe("generation-based pruning", () => {
+  // Generation only advances on set/getOrSet-miss, so we use sets on a
+  // throwaway key to burn through generations.
+  function burnGenerations(
+    cache: ReturnType<typeof createTrieCache<number>>,
+    n: number,
+  ) {
+    for (let i = 0; i < n; i++) {
+      cache.set(prefix(200, i & 0xff, (i >> 8) & 0xff), 0);
+    }
+  }
+
   it("evicts stale subtrees after pruneInterval ticks", () => {
     // pruneInterval=10, maxAge=5: after 10 ticks, anything not
     // touched in the last 5 generations gets clipped.
@@ -72,28 +83,27 @@ describe("generation-based pruning", () => {
     cache.set(prefix(1), 1); // generation ~1
     cache.set(prefix(2), 2); // generation ~2
 
-    // Burn through generations by doing gets on a different key.
-    for (let i = 0; i < 10; i++) {
-      cache.get(prefix(99)); // misses, but still ticks the generation
-    }
+    // Burn through generations with sets on a different key.
+    burnGenerations(cache, 10);
 
     // Prune should have fired by now and clipped prefix(1) and prefix(2).
     expect(cache.get(prefix(1))).toBeUndefined();
     expect(cache.get(prefix(2))).toBeUndefined();
   });
 
-  it("preserves recently-accessed entries", () => {
+  it("preserves entries that are re-set", () => {
     const cache = createTrieCache<number>(10, 5);
 
     cache.set(prefix(1), 1);
     cache.set(prefix(2), 2);
 
-    // Keep prefix(1) alive by touching it periodically.
+    // Keep prefix(1) alive by re-setting it among the burn writes.
     for (let i = 0; i < 12; i++) {
-      cache.get(prefix(1));
+      cache.set(prefix(200, i), 0);
+      if (i % 3 === 0) cache.set(prefix(1), 1);
     }
 
-    // prefix(1) was touched recently, prefix(2) was not.
+    // prefix(1) was re-set recently, prefix(2) was not.
     expect(cache.get(prefix(1))).toBe(1);
     expect(cache.get(prefix(2))).toBeUndefined();
   });
@@ -105,9 +115,7 @@ describe("generation-based pruning", () => {
     cache.set(prefix(1, 2, 3), 100);
 
     // Let it go stale.
-    for (let i = 0; i < 10; i++) {
-      cache.get(prefix(99));
-    }
+    burnGenerations(cache, 10);
 
     // The whole subtree under prefix(1) should be gone.
     expect(cache.get(prefix(1, 2, 3))).toBeUndefined();
@@ -117,19 +125,20 @@ describe("generation-based pruning", () => {
     expect(cache.get(prefix(1, 2, 3))).toBe(200);
   });
 
-  it("touching a deep path keeps ancestors alive", () => {
+  it("setting a deep path keeps ancestors alive", () => {
     const cache = createTrieCache<number>(20, 10);
 
     cache.set(prefix(1), 10);
     cache.set(prefix(1, 2), 20);
     cache.set(prefix(1, 2, 3), 30);
 
-    // Only touch the deepest node — walk() stamps the whole path.
+    // Re-set the deepest node among burn writes — ensure() stamps the whole path.
     for (let i = 0; i < 22; i++) {
-      cache.get(prefix(1, 2, 3));
+      cache.set(prefix(200, i), 0);
+      if (i % 3 === 0) cache.set(prefix(1, 2, 3), 30);
     }
 
-    // All ancestors should still be alive because walk stamps the path.
+    // All ancestors should still be alive because ensure stamps the path.
     expect(cache.get(prefix(1))).toBe(10);
     expect(cache.get(prefix(1, 2))).toBe(20);
     expect(cache.get(prefix(1, 2, 3))).toBe(30);
