@@ -28,6 +28,11 @@ export interface TokenProb<T> {
  * A simple language model that returns a plain probability distribution
  * (without cumulative extents or filtering).  Use `adaptModel` to convert
  * to a full `CDFView`.
+ *
+ * Implementations must return the *full* next-token distribution: one entry
+ * per token in the model's alphabet, in a fixed canonical order (e.g. byte
+ * 0, 1, …, 255 for a byte-level model), including tokens with zero
+ * probability.  Callers may rely on positional indexing and completeness.
  */
 export type LanguageModel<P, T> = (
   prefix: P,

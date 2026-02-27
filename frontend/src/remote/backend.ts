@@ -35,11 +35,7 @@ interface TrieResponse {
 type TokenProbs = readonly TokenProb<number>[];
 
 function distToTokenProbs(dist: number[]): TokenProbs {
-  const result: TokenProb<number>[] = [];
-  for (let i = 0; i < dist.length; i++) {
-    if (dist[i] > 0) result.push({ token: i, probability: dist[i] });
-  }
-  return result;
+  return dist.map((probability, token) => ({ token, probability }));
 }
 
 interface PendingRequest {

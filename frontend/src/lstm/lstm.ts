@@ -632,11 +632,5 @@ export async function createCachedLSTMPredictor(
 }
 
 function toPlainProbs(probs: Float32Array): TokenProb<number>[] {
-  const result: TokenProb<number>[] = [];
-  for (let i = 0; i < probs.length; i++) {
-    if (probs[i] > 0) {
-      result.push({ token: i, probability: probs[i] });
-    }
-  }
-  return result;
+  return Array.from(probs, (probability, token) => ({ token, probability }));
 }

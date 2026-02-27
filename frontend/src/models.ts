@@ -61,6 +61,11 @@ function decodeUtf8Bytes(bytes: number[]): number {
 // Multi-byte expansion
 // ---------------------------------------------------------------------------
 
+/**
+ * A byte-level language model.  Returns exactly 256 entries (bytes 0–255)
+ * in order, including zero-probability bytes.  Callers may index the result
+ * by byte value directly.
+ */
 export type ByteLevelModel = (
   bytePrefix: Uint8Array,
   minProb: number,
@@ -238,15 +243,13 @@ async function lookupSpecificToken(
 export function fromByteLevelModel(
   byteLevelModel: ByteLevelModel,
 ): CDFView<readonly number[], number> {
-  // Convert TokenProb[] → 256-element array for indexed byte access.
+  // Extract the probability column from the full ordered TokenProb[] array.
   const rawModel = async (
     prefix: Uint8Array,
     minProb: number,
   ): Promise<number[]> => {
     const probs = await byteLevelModel(prefix, minProb);
-    const dist: number[] = new Array(256).fill(0);
-    for (const { token, probability } of probs) dist[token] = probability;
-    return dist;
+    return probs.map(({ probability }) => probability);
   };
 
   return async function* (
@@ -541,7 +544,7 @@ export function trieCache(
 }
 
 /**
- * Wrap a byte-level model to filter out any next-byte predictions that
+ * Wrap a byte-level model to zero out any next-byte predictions that
  * would violate UTF-8 encoding rules, and renormalise the distribution.
  */
 export function forceCleanUtf8(
@@ -551,17 +554,16 @@ export function forceCleanUtf8(
     const dist = await model(prefix);
     const isLegal = legalUtf8NextByte(prefix);
 
-    const filtered = dist.filter(({ token }) => isLegal(token));
+    let total = 0;
+    for (const { token, probability } of dist) {
+      if (isLegal(token)) total += probability;
+    }
+    if (total === 0)
+      return dist.map(({ token }) => ({ token, probability: 0 }));
 
-    const total = filtered.reduce(
-      (sum, { probability }) => sum + probability,
-      0,
-    );
-    if (total === 0) return [];
-
-    return filtered.map(({ token, probability }) => ({
+    return dist.map(({ token, probability }) => ({
       token,
-      probability: probability / total,
+      probability: isLegal(token) ? probability / total : 0,
     }));
   };
 }

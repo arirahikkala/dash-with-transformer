@@ -41,13 +41,9 @@ function prefixKey(buf: Uint8Array): string {
     .join("");
 }
 
-/** Convert a 256-element probability array to TokenProb[]. */
+/** Convert a 256-element probability array to a full ordered TokenProb[]. */
 function distToTokenProbs(dist: number[]): readonly TokenProb<number>[] {
-  const result: TokenProb<number>[] = [];
-  for (let i = 0; i < dist.length; i++) {
-    if (dist[i] > 0) result.push({ token: i, probability: dist[i] });
-  }
-  return result;
+  return dist.map((probability, token) => ({ token, probability }));
 }
 
 /** Create a mock byte-level model from a hex-key → dist table. */
@@ -905,15 +901,25 @@ describe("interpolate", () => {
 // ---------------------------------------------------------------------------
 
 describe("forceCleanUtf8", () => {
-  /** Create a mock LanguageModel from a hex-key → dist table. */
+  /**
+   * Create a mock LanguageModel from a hex-key → sparse entries table.
+   * Each value is padded to a full 256-entry ordered distribution.
+   */
   function makePlainModel(
     table: Record<string, readonly TokenProb<number>[]>,
   ): LanguageModel<Uint8Array, number> {
     return async (prefix: Uint8Array) => {
       const key = prefixKey(prefix);
-      const result = table[key];
-      if (!result) throw new Error(`Unexpected prefix: "${key}"`);
-      return result;
+      const sparse = table[key];
+      if (!sparse) throw new Error(`Unexpected prefix: "${key}"`);
+      const full: TokenProb<number>[] = Array.from({ length: 256 }, (_, i) => ({
+        token: i,
+        probability: 0,
+      }));
+      for (const { token, probability } of sparse) {
+        full[token] = { token, probability };
+      }
+      return full;
     };
   }
 
@@ -927,11 +933,10 @@ describe("forceCleanUtf8", () => {
     });
     const dist = await forceCleanUtf8(model)(new Uint8Array([]));
 
-    expect(dist).toHaveLength(2);
-    expect(dist[0].token).toBe(0x61);
-    expect(dist[1].token).toBe(0xc3);
-    expect(dist[0].probability).toBeCloseTo(2 / 3);
-    expect(dist[1].probability).toBeCloseTo(1 / 3);
+    expect(dist).toHaveLength(256);
+    expect(dist[0x61].probability).toBeCloseTo(2 / 3);
+    expect(dist[0x80].probability).toBe(0);
+    expect(dist[0xc3].probability).toBeCloseTo(1 / 3);
   });
 
   it("filters out lead bytes when a continuation byte is expected", async () => {
@@ -945,9 +950,10 @@ describe("forceCleanUtf8", () => {
     });
     const dist = await forceCleanUtf8(model)(new Uint8Array([0xc3]));
 
-    expect(dist).toHaveLength(1);
-    expect(dist[0].token).toBe(0xa9);
-    expect(dist[0].probability).toBeCloseTo(1.0);
+    expect(dist).toHaveLength(256);
+    expect(dist[0xa9].probability).toBeCloseTo(1.0);
+    expect(dist[0x61].probability).toBe(0);
+    expect(dist[0xc3].probability).toBe(0);
   });
 
   it("enforces restricted range after E0 (rejects overlong encodings)", async () => {
@@ -959,9 +965,9 @@ describe("forceCleanUtf8", () => {
     });
     const dist = await forceCleanUtf8(model)(new Uint8Array([0xe0]));
 
-    expect(dist).toHaveLength(1);
-    expect(dist[0].token).toBe(0xa0);
-    expect(dist[0].probability).toBeCloseTo(1.0);
+    expect(dist).toHaveLength(256);
+    expect(dist[0x80].probability).toBe(0);
+    expect(dist[0xa0].probability).toBeCloseTo(1.0);
   });
 
   it("enforces restricted range after F0 and F4", async () => {
@@ -973,8 +979,9 @@ describe("forceCleanUtf8", () => {
       ],
     });
     const f0Dist = await forceCleanUtf8(f0Model)(new Uint8Array([0xf0]));
-    expect(f0Dist).toHaveLength(1);
-    expect(f0Dist[0].token).toBe(0x90);
+    expect(f0Dist).toHaveLength(256);
+    expect(f0Dist[0x80].probability).toBe(0);
+    expect(f0Dist[0x90].probability).toBeCloseTo(1.0);
 
     // After F4: first continuation must be 0x80–0x8F
     const f4Model = makePlainModel({
@@ -984,8 +991,9 @@ describe("forceCleanUtf8", () => {
       ],
     });
     const f4Dist = await forceCleanUtf8(f4Model)(new Uint8Array([0xf4]));
-    expect(f4Dist).toHaveLength(1);
-    expect(f4Dist[0].token).toBe(0x80);
+    expect(f4Dist).toHaveLength(256);
+    expect(f4Dist[0x80].probability).toBeCloseTo(1.0);
+    expect(f4Dist[0x90].probability).toBe(0);
   });
 
   it("passes through an already-clean distribution unchanged", async () => {
@@ -997,9 +1005,9 @@ describe("forceCleanUtf8", () => {
     });
     const dist = await forceCleanUtf8(model)(new Uint8Array([]));
 
-    expect(dist).toHaveLength(2);
-    expect(dist[0]).toEqual({ token: 0x61, probability: 0.5 });
-    expect(dist[1]).toEqual({ token: 0x62, probability: 0.5 });
+    expect(dist).toHaveLength(256);
+    expect(dist[0x61]).toEqual({ token: 0x61, probability: 0.5 });
+    expect(dist[0x62]).toEqual({ token: 0x62, probability: 0.5 });
   });
 
   it("allows generic continuation bytes in later positions of a multi-byte sequence", async () => {
@@ -1014,10 +1022,10 @@ describe("forceCleanUtf8", () => {
     });
     const dist = await forceCleanUtf8(model)(new Uint8Array([0xe4, 0xb8]));
 
-    expect(dist).toHaveLength(3);
-    expect(dist.map((d) => d.token)).toEqual([0x80, 0xad, 0xbf]);
-    for (const d of dist) {
-      expect(d.probability).toBeCloseTo(1 / 3);
-    }
+    expect(dist).toHaveLength(256);
+    expect(dist[0x80].probability).toBeCloseTo(1 / 3);
+    expect(dist[0xad].probability).toBeCloseTo(1 / 3);
+    expect(dist[0xbf].probability).toBeCloseTo(1 / 3);
+    expect(dist[0x61].probability).toBe(0);
   });
 });
