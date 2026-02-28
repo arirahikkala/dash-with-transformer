@@ -5,11 +5,17 @@ import {
   interpolate,
   type ByteLevelModel,
 } from "./models";
-import type { LanguageModel } from "./types";
+import type { LanguageModel, SpecialToken, UnicodeCodepoint } from "./types";
 
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
+
+/** Shorthand for a UnicodeCodepoint token. */
+const cp = (n: number): UnicodeCodepoint => ({
+  type: "codepoint",
+  codepoint: n,
+});
 
 /** Collect all items from an async iterable into an array. */
 async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {
@@ -27,6 +33,17 @@ function makeDist(entries: Record<number, number>): number[] {
     dist[Number(byte)] = prob;
   }
   return dist;
+}
+
+/**
+ * Build a distribution with byte entries (indices 0–255) and optional
+ * extra entries for special tokens (indices ≥ 256).
+ */
+function makeDistWithSpecial(
+  byteEntries: Record<number, number>,
+  specialProbs: number[],
+): number[] {
+  return [...makeDist(byteEntries), ...specialProbs];
 }
 
 /** Hex key for a byte prefix (empty prefix → ""). */
@@ -73,13 +90,13 @@ describe("ASCII-only model", () => {
   };
 
   it("returns correct tokens and extents", async () => {
-    const lm = fromByteLevelModel(makeMockModel(table));
+    const lm = fromByteLevelModel(makeMockModel(table), []);
     const result = await collect(lm([], 0, 1, 0));
 
     expect(result).toHaveLength(3);
-    expect(result[0]).toEqual({ token: 97, start: 0, end: 0.5 });
-    expect(result[1]).toEqual({ token: 98, start: 0.5, end: 0.75 });
-    expect(result[2]).toEqual({ token: 99, start: 0.75, end: 1.0 });
+    expect(result[0]).toEqual({ token: cp(97), start: 0, end: 0.5 });
+    expect(result[1]).toEqual({ token: cp(98), start: 0.5, end: 0.75 });
+    expect(result[2]).toEqual({ token: cp(99), start: 0.75, end: 1.0 });
   });
 
   it("returns tokens in ascending codepoint order", async () => {
@@ -87,9 +104,10 @@ describe("ASCII-only model", () => {
     // the model still iterates 0..255 internally.
     const lm = fromByteLevelModel(
       makeMockModel({ "": makeDist({ 99: 0.25, 97: 0.5, 98: 0.25 }) }),
+      [],
     );
     const tokens = (await collect(lm([], 0, 1, 0))).map((e) => e.token);
-    expect(tokens).toEqual([97, 98, 99]);
+    expect(tokens).toEqual([cp(97), cp(98), cp(99)]);
   });
 });
 
@@ -105,13 +123,13 @@ describe("two-byte codepoints", () => {
   };
 
   it("computes product probabilities correctly", async () => {
-    const lm = fromByteLevelModel(makeMockModel(table));
+    const lm = fromByteLevelModel(makeMockModel(table), []);
     const result = await collect(lm([], 0, 1, 0));
 
     expect(result).toHaveLength(3);
-    expect(result[0]).toEqual({ token: 97, start: 0, end: 0.5 }); // a
-    expect(result[1]).toEqual({ token: 0xe8, start: 0.5, end: 0.75 }); // è
-    expect(result[2]).toEqual({ token: 0xe9, start: 0.75, end: 1.0 }); // é
+    expect(result[0]).toEqual({ token: cp(97), start: 0, end: 0.5 }); // a
+    expect(result[1]).toEqual({ token: cp(0xe8), start: 0.5, end: 0.75 }); // è
+    expect(result[2]).toEqual({ token: cp(0xe9), start: 0.75, end: 1.0 }); // é
   });
 });
 
@@ -128,11 +146,11 @@ describe("three-byte codepoints", () => {
   };
 
   it("resolves to the correct codepoint", async () => {
-    const lm = fromByteLevelModel(makeMockModel(table));
+    const lm = fromByteLevelModel(makeMockModel(table), []);
     const result = await collect(lm([], 0, 1, 0));
 
     expect(result).toHaveLength(1);
-    expect(result[0].token).toBe(0x4e2d);
+    expect(result[0].token).toEqual(cp(0x4e2d));
     expect(result[0].start).toBe(0);
     expect(result[0].end).toBe(1);
   });
@@ -152,11 +170,11 @@ describe("four-byte codepoints", () => {
   };
 
   it("resolves to the correct codepoint", async () => {
-    const lm = fromByteLevelModel(makeMockModel(table));
+    const lm = fromByteLevelModel(makeMockModel(table), []);
     const result = await collect(lm([], 0, 1, 0));
 
     expect(result).toHaveLength(1);
-    expect(result[0].token).toBe(0x1f600);
+    expect(result[0].token).toEqual(cp(0x1f600));
     expect(result[0].start).toBe(0);
     expect(result[0].end).toBe(1);
   });
@@ -176,17 +194,17 @@ describe("mixed codepoints", () => {
   };
 
   it("orders and positions all codepoints correctly", async () => {
-    const lm = fromByteLevelModel(makeMockModel(table));
+    const lm = fromByteLevelModel(makeMockModel(table), []);
     const result = await collect(lm([], 0, 1, 0));
 
     expect(result).toHaveLength(3);
-    expect(result[0]).toEqual({ token: 97, start: 0, end: 0.5 }); // a
-    expect(result[1]).toEqual({ token: 0xe9, start: 0.5, end: 0.75 }); // é
-    expect(result[2]).toEqual({ token: 0x4e2d, start: 0.75, end: 1.0 }); // 中
+    expect(result[0]).toEqual({ token: cp(97), start: 0, end: 0.5 }); // a
+    expect(result[1]).toEqual({ token: cp(0xe9), start: 0.5, end: 0.75 }); // é
+    expect(result[2]).toEqual({ token: cp(0x4e2d), start: 0.75, end: 1.0 }); // 中
   });
 
   it("produces contiguous entries", async () => {
-    const lm = fromByteLevelModel(makeMockModel(table));
+    const lm = fromByteLevelModel(makeMockModel(table), []);
     const result = await collect(lm([], 0, 1, 0));
 
     expect(result[0].start).toBe(0);
@@ -209,20 +227,20 @@ describe("range filtering", () => {
   };
 
   it("excludes entries outside the range", async () => {
-    const lm = fromByteLevelModel(makeMockModel(table));
+    const lm = fromByteLevelModel(makeMockModel(table), []);
     // [0.51, 0.74] excludes a (ends at 0.5) and é (starts at 0.75)
     const result = await collect(lm([], 0.51, 0.74, 0));
 
     expect(result).toHaveLength(1);
-    expect(result[0].token).toBe(0xe8); // è
+    expect(result[0].token).toEqual(cp(0xe8)); // è
   });
 
   it("includes entries that partially overlap", async () => {
-    const lm = fromByteLevelModel(makeMockModel(table));
+    const lm = fromByteLevelModel(makeMockModel(table), []);
     // [0.4, 0.8) overlaps a, è, é
     const result = await collect(lm([], 0.4, 0.8, 0));
     const tokens = result.map((e) => e.token);
-    expect(tokens).toEqual([97, 0xe8, 0xe9]);
+    expect(tokens).toEqual([cp(97), cp(0xe8), cp(0xe9)]);
   });
 });
 
@@ -238,57 +256,57 @@ describe("closed-range semantics", () => {
   };
 
   it("point query returns the containing node", async () => {
-    const lm = fromByteLevelModel(makeMockModel(table));
+    const lm = fromByteLevelModel(makeMockModel(table), []);
     // 0.6 is inside è=[0.5, 0.75]
     const result = await collect(lm([], 0.6, 0.6, 0));
 
     expect(result).toHaveLength(1);
-    expect(result[0].token).toBe(0xe8);
+    expect(result[0].token).toEqual(cp(0xe8));
   });
 
   it("point query at a boundary returns both adjacent nodes", async () => {
-    const lm = fromByteLevelModel(makeMockModel(table));
+    const lm = fromByteLevelModel(makeMockModel(table), []);
     // 0.5 is exactly at the boundary between a=[0, 0.5] and è=[0.5, 0.75]
     const result = await collect(lm([], 0.5, 0.5, 0));
 
     expect(result).toHaveLength(2);
-    expect(result[0].token).toBe(97); // a (end touches)
-    expect(result[1].token).toBe(0xe8); // è (start touches)
+    expect(result[0].token).toEqual(cp(97)); // a (end touches)
+    expect(result[1].token).toEqual(cp(0xe8)); // è (start touches)
   });
 
   it("point query at a multi-byte boundary returns both adjacent nodes", async () => {
-    const lm = fromByteLevelModel(makeMockModel(table));
+    const lm = fromByteLevelModel(makeMockModel(table), []);
     // 0.75 is exactly at the boundary between è=[0.5, 0.75] and é=[0.75, 1.0]
     const result = await collect(lm([], 0.75, 0.75, 0));
 
     expect(result).toHaveLength(2);
-    expect(result[0].token).toBe(0xe8); // è (end touches)
-    expect(result[1].token).toBe(0xe9); // é (start touches)
+    expect(result[0].token).toEqual(cp(0xe8)); // è (end touches)
+    expect(result[1].token).toEqual(cp(0xe9)); // é (start touches)
   });
 
   it("closed range includes nodes touching the boundary", async () => {
-    const lm = fromByteLevelModel(makeMockModel(table));
+    const lm = fromByteLevelModel(makeMockModel(table), []);
     // [0.5, 0.75] touches a at its end AND é at its start
     const result = await collect(lm([], 0.5, 0.75, 0));
 
     expect(result).toHaveLength(3);
-    expect(result.map((e) => e.token)).toEqual([97, 0xe8, 0xe9]);
+    expect(result.map((e) => e.token)).toEqual([cp(97), cp(0xe8), cp(0xe9)]);
   });
 
   it("point query at 0 returns the first node", async () => {
-    const lm = fromByteLevelModel(makeMockModel(table));
+    const lm = fromByteLevelModel(makeMockModel(table), []);
     const result = await collect(lm([], 0, 0, 0));
 
     expect(result).toHaveLength(1);
-    expect(result[0].token).toBe(97);
+    expect(result[0].token).toEqual(cp(97));
   });
 
   it("point query at 1 returns the last node", async () => {
-    const lm = fromByteLevelModel(makeMockModel(table));
+    const lm = fromByteLevelModel(makeMockModel(table), []);
     const result = await collect(lm([], 1, 1, 0));
 
     expect(result).toHaveLength(1);
-    expect(result[0].token).toBe(0xe9);
+    expect(result[0].token).toEqual(cp(0xe9));
   });
 });
 
@@ -307,21 +325,21 @@ describe("closed-range with deep multi-byte", () => {
   };
 
   it("point query at sub-group boundary returns both codepoints", async () => {
-    const lm = fromByteLevelModel(makeMockModel(table));
+    const lm = fromByteLevelModel(makeMockModel(table), []);
     // 0.5 is the boundary between 中=[0, 0.5] and 乀=[0.5, 1.0]
     const result = await collect(lm([], 0.5, 0.5, 0));
 
     expect(result).toHaveLength(2);
-    expect(result[0].token).toBe(0x4e2d); // 中
-    expect(result[1].token).toBe(0x4e40); // 乀
+    expect(result[0].token).toEqual(cp(0x4e2d)); // 中
+    expect(result[1].token).toEqual(cp(0x4e40)); // 乀
   });
 
   it("point query inside a sub-group returns just that codepoint", async () => {
-    const lm = fromByteLevelModel(makeMockModel(table));
+    const lm = fromByteLevelModel(makeMockModel(table), []);
     const result = await collect(lm([], 0.25, 0.25, 0));
 
     expect(result).toHaveLength(1);
-    expect(result[0].token).toBe(0x4e2d);
+    expect(result[0].token).toEqual(cp(0x4e2d));
   });
 });
 
@@ -336,16 +354,16 @@ describe("minProb filtering", () => {
   };
 
   it("excludes entries below minProb", async () => {
-    const lm = fromByteLevelModel(makeMockModel(table));
+    const lm = fromByteLevelModel(makeMockModel(table), []);
     // a=0.5, è=0.25, é=0.25  —  minProb 0.3 keeps only a
     const result = await collect(lm([], 0, 1, 0.3));
 
     expect(result).toHaveLength(1);
-    expect(result[0].token).toBe(97);
+    expect(result[0].token).toEqual(cp(97));
   });
 
   it("keeps entries at exactly minProb", async () => {
-    const lm = fromByteLevelModel(makeMockModel(table));
+    const lm = fromByteLevelModel(makeMockModel(table), []);
     const result = await collect(lm([], 0, 1, 0.25));
     expect(result).toHaveLength(3);
   });
@@ -362,27 +380,35 @@ describe("extent determinism", () => {
   };
 
   it("produces identical extents for different range queries", async () => {
-    const lm = fromByteLevelModel(makeMockModel(table));
+    const lm = fromByteLevelModel(makeMockModel(table), []);
 
     const full = await collect(lm([], 0, 1, 0));
     const narrow = await collect(lm([], 0.6, 0.9, 0));
 
     // Both queries should include è — verify same extent.
-    const eFull = full.find((e) => e.token === 0xe8)!;
-    const eNarrow = narrow.find((e) => e.token === 0xe8)!;
+    const eFull = full.find(
+      (e) => e.token.type === "codepoint" && e.token.codepoint === 0xe8,
+    )!;
+    const eNarrow = narrow.find(
+      (e) => e.token.type === "codepoint" && e.token.codepoint === 0xe8,
+    )!;
 
     expect(eNarrow.start).toBe(eFull.start);
     expect(eNarrow.end).toBe(eFull.end);
   });
 
   it("produces identical extents for different minProb queries", async () => {
-    const lm = fromByteLevelModel(makeMockModel(table));
+    const lm = fromByteLevelModel(makeMockModel(table), []);
 
     const all = await collect(lm([], 0, 1, 0));
     const filtered = await collect(lm([], 0, 1, 0.2));
 
-    const aAll = all.find((e) => e.token === 97)!;
-    const aFiltered = filtered.find((e) => e.token === 97)!;
+    const aAll = all.find(
+      (e) => e.token.type === "codepoint" && e.token.codepoint === 97,
+    )!;
+    const aFiltered = filtered.find(
+      (e) => e.token.type === "codepoint" && e.token.codepoint === 97,
+    )!;
 
     expect(aFiltered.start).toBe(aAll.start);
     expect(aFiltered.end).toBe(aAll.end);
@@ -400,7 +426,7 @@ describe("call minimisation", () => {
       c3: makeDist({ 0xa9: 1.0 }),
     };
     const { model, calls } = makeTrackingModel(table);
-    const lm = fromByteLevelModel(model);
+    const lm = fromByteLevelModel(model, []);
 
     // range [0, 0.49] — multi-byte group starts at 0.5, excluded
     await collect(lm([], 0, 0.49, 0));
@@ -415,7 +441,7 @@ describe("call minimisation", () => {
       e4b8: makeDist({ 0xad: 1.0 }),
     };
     const { model, calls } = makeTrackingModel(table);
-    const lm = fromByteLevelModel(model);
+    const lm = fromByteLevelModel(model, []);
 
     // minProb 0.3 means both multi-byte groups (0.25 each) are skipped
     await collect(lm([], 0, 1, 0.3));
@@ -432,7 +458,7 @@ describe("call minimisation", () => {
     };
     // a=[0,.25], U+80=[.25,.5], é=[.5,.75], 中=[.75,1]
     const { model, calls } = makeTrackingModel(table);
-    const lm = fromByteLevelModel(model);
+    const lm = fromByteLevelModel(model, []);
 
     // range [0.51, 0.74] — only 0xC3 group overlaps
     await collect(lm([], 0.51, 0.74, 0));
@@ -453,7 +479,7 @@ describe("call minimisation", () => {
       e4b9: makeDist({ 0x80: 1.0 }),
     };
     const { model, calls } = makeTrackingModel(table);
-    const lm = fromByteLevelModel(model);
+    const lm = fromByteLevelModel(model, []);
 
     // range [0, 0.49] covers only the B8 sub-group
     await collect(lm([], 0, 0.49, 0));
@@ -472,7 +498,7 @@ describe("call minimisation", () => {
       e4b9: makeDist({ 0x80: 1.0 }),
     };
     const { model, calls } = makeTrackingModel(table);
-    const lm = fromByteLevelModel(model);
+    const lm = fromByteLevelModel(model, []);
 
     // minProb 0.3 — B9 sub-group (prob 0.25) is below threshold
     await collect(lm([], 0, 1, 0.3));
@@ -493,7 +519,7 @@ describe("call minimisation", () => {
       f09f99: makeDist({ 0x80: 1.0 }), // 🦀 at [0.5, 1] (F0 9F 99 80 = U+1F640)
     };
     const { model, calls } = makeTrackingModel(table);
-    const lm = fromByteLevelModel(model);
+    const lm = fromByteLevelModel(model, []);
 
     // range [0, 0.49] — only the 0x98 sub-group
     await collect(lm([], 0, 0.49, 0));
@@ -528,7 +554,7 @@ describe("parallelism", () => {
       return table[key]!;
     };
 
-    const lm = fromByteLevelModel(model);
+    const lm = fromByteLevelModel(model, []);
     await collect(lm([], 0, 1, 0));
 
     // The two continuation calls (c2, c3) should overlap.
@@ -545,11 +571,11 @@ describe("codepoint prefix encoding", () => {
     const { model, calls } = makeTrackingModel({
       "61": makeDist({ 98: 1.0 }), // after 'a', predict 'b'
     });
-    const lm = fromByteLevelModel(model);
+    const lm = fromByteLevelModel(model, []);
 
-    const result = await collect(lm([0x61], 0, 1, 0));
+    const result = await collect(lm([cp(0x61)], 0, 1, 0));
     expect(calls).toEqual(["61"]);
-    expect(result[0].token).toBe(98);
+    expect(result[0].token).toEqual(cp(98));
   });
 
   it("encodes a multi-byte codepoint prefix", async () => {
@@ -557,11 +583,11 @@ describe("codepoint prefix encoding", () => {
     const { model, calls } = makeTrackingModel({
       c3a9: makeDist({ 97: 1.0 }),
     });
-    const lm = fromByteLevelModel(model);
+    const lm = fromByteLevelModel(model, []);
 
-    const result = await collect(lm([0xe9], 0, 1, 0));
+    const result = await collect(lm([cp(0xe9)], 0, 1, 0));
     expect(calls).toEqual(["c3a9"]);
-    expect(result[0].token).toBe(97);
+    expect(result[0].token).toEqual(cp(97));
   });
 
   it("encodes a mixed single/multi-byte prefix", async () => {
@@ -569,11 +595,11 @@ describe("codepoint prefix encoding", () => {
     const { model, calls } = makeTrackingModel({
       "61c3a9": makeDist({ 98: 1.0 }),
     });
-    const lm = fromByteLevelModel(model);
+    const lm = fromByteLevelModel(model, []);
 
-    const result = await collect(lm([97, 0xe9], 0, 1, 0));
+    const result = await collect(lm([cp(97), cp(0xe9)], 0, 1, 0));
     expect(calls).toEqual(["61c3a9"]);
-    expect(result[0].token).toBe(98);
+    expect(result[0].token).toEqual(cp(98));
   });
 });
 
@@ -585,17 +611,21 @@ describe("edge cases", () => {
   it("returns empty for an all-zero distribution", async () => {
     const lm = fromByteLevelModel(
       makeMockModel({ "": new Array(256).fill(0) }),
+      [],
     );
     const result = await collect(lm([], 0, 1, 0));
     expect(result).toHaveLength(0);
   });
 
   it("handles a single ASCII token", async () => {
-    const lm = fromByteLevelModel(makeMockModel({ "": makeDist({ 65: 1 }) }));
+    const lm = fromByteLevelModel(
+      makeMockModel({ "": makeDist({ 65: 1 }) }),
+      [],
+    );
     const result = await collect(lm([], 0, 1, 0));
 
     expect(result).toHaveLength(1);
-    expect(result[0]).toEqual({ token: 65, start: 0, end: 1 });
+    expect(result[0]).toEqual({ token: cp(65), start: 0, end: 1 });
   });
 
   it("handles multiple lead bytes for different sequence lengths", async () => {
@@ -609,10 +639,14 @@ describe("edge cases", () => {
       f09f: makeDist({ 0x98: 1.0 }),
       f09f98: makeDist({ 0x80: 1.0 }),
     };
-    const lm = fromByteLevelModel(makeMockModel(table));
+    const lm = fromByteLevelModel(makeMockModel(table), []);
     const result = await collect(lm([], 0, 1, 0));
 
-    expect(result.map((e) => e.token)).toEqual([0xe9, 0x4e2d, 0x1f600]);
+    expect(result.map((e) => e.token)).toEqual([
+      cp(0xe9),
+      cp(0x4e2d),
+      cp(0x1f600),
+    ]);
     expect(result[0].start).toBe(0);
     expect(result[0].end).toBe(0.25);
     expect(result[1].start).toBe(0.25);
@@ -629,14 +663,14 @@ describe("edge cases", () => {
       e4b8: makeDist({ 0xad: 1.0 }),
       e4b9: makeDist({ 0x80: 1.0 }),
     };
-    const lm = fromByteLevelModel(makeMockModel(table));
+    const lm = fromByteLevelModel(makeMockModel(table), []);
     const result = await collect(lm([], 0, 1, 0));
 
     // E4 B8 AD = U+4E2D ('中'), E4 B9 80 = U+4E40 ('乀')
     expect(result).toHaveLength(2);
-    expect(result[0].token).toBe(0x4e2d);
+    expect(result[0].token).toEqual(cp(0x4e2d));
     expect(result[0].end).toBe(0.5);
-    expect(result[1].token).toBe(0x4e40);
+    expect(result[1].token).toEqual(cp(0x4e40));
     expect(result[1].start).toBe(0.5);
     expect(result[1].end).toBe(1.0);
   });
@@ -645,10 +679,180 @@ describe("edge cases", () => {
     const { model, calls } = makeTrackingModel({
       "": makeDist({ 97: 1.0 }),
     });
-    const lm = fromByteLevelModel(model);
+    const lm = fromByteLevelModel(model, []);
 
     await collect(lm([], 0, 1, 0));
     expect(calls).toEqual([""]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Special tokens
+// ---------------------------------------------------------------------------
+
+describe("special tokens", () => {
+  const eos: SpecialToken = { type: "special", index: 256, label: "<eos>" };
+  const pad: SpecialToken = { type: "special", index: 257, label: "<pad>" };
+
+  it("yields special tokens from the first-byte distribution", async () => {
+    const table: Record<string, number[]> = {
+      "": makeDistWithSpecial({ 97: 0.5 }, [0.3, 0.2]),
+    };
+    const lm = fromByteLevelModel(makeMockModel(table), [eos, pad]);
+    const result = await collect(lm([], 0, 1, 0));
+
+    expect(result).toHaveLength(3);
+    expect(result[0]).toEqual({ token: cp(97), start: 0, end: 0.5 });
+    // Special tokens follow all bytes in cumulative order
+    expect(result[1]).toEqual({ token: eos, start: 0.5, end: 0.8 });
+    expect(result[2]).toEqual({ token: pad, start: 0.8, end: 1.0 });
+  });
+
+  it("positions special tokens after all byte entries in the CDF", async () => {
+    const table: Record<string, number[]> = {
+      "": makeDistWithSpecial({ 97: 0.25, 0xc3: 0.25 }, [0.5]),
+      c3: makeDist({ 0xa9: 1.0 }),
+    };
+    const lm = fromByteLevelModel(makeMockModel(table), [eos]);
+    const result = await collect(lm([], 0, 1, 0));
+
+    expect(result).toHaveLength(3);
+    // a at [0, 0.25], é at [0.25, 0.5], <eos> at [0.5, 1.0]
+    // (yield order between multi-byte and special tokens is not guaranteed)
+    expect(result).toContainEqual({ token: cp(97), start: 0, end: 0.25 });
+    expect(result).toContainEqual({
+      token: cp(0xe9),
+      start: 0.25,
+      end: 0.5,
+    });
+    expect(result).toContainEqual({ token: eos, start: 0.5, end: 1.0 });
+  });
+
+  it("ignores special tokens in continuation byte distributions", async () => {
+    // The continuation dist has an entry at index 256, which should be ignored
+    const table: Record<string, number[]> = {
+      "": makeDist({ 0xc3: 1.0 }),
+      c3: makeDistWithSpecial({ 0xa9: 0.8 }, [0.2]),
+    };
+    const lm = fromByteLevelModel(makeMockModel(table), [eos]);
+    const result = await collect(lm([], 0, 1, 0));
+
+    // Only the codepoint is yielded; the special token in the continuation is ignored
+    expect(result).toHaveLength(1);
+    expect(result[0].token).toEqual(cp(0xe9));
+    // The extent is [0, 0.8] — the 0.2 for the special token is a hole
+    expect(result[0].start).toBe(0);
+    expect(result[0].end).toBe(0.8);
+  });
+
+  it("handles zero-probability special tokens", async () => {
+    const table: Record<string, number[]> = {
+      "": makeDistWithSpecial({ 97: 1.0 }, [0, 0]),
+    };
+    const lm = fromByteLevelModel(makeMockModel(table), [eos, pad]);
+    const result = await collect(lm([], 0, 1, 0));
+
+    expect(result).toHaveLength(1);
+    expect(result[0].token).toEqual(cp(97));
+  });
+
+  it("applies range filtering to special tokens", async () => {
+    const table: Record<string, number[]> = {
+      "": makeDistWithSpecial({ 97: 0.5 }, [0.3, 0.2]),
+    };
+    const lm = fromByteLevelModel(makeMockModel(table), [eos, pad]);
+    // range [0.51, 0.79] only overlaps <eos>=[0.5, 0.8]
+    const result = await collect(lm([], 0.51, 0.79, 0));
+
+    expect(result).toHaveLength(1);
+    expect(result[0].token).toEqual(eos);
+  });
+
+  it("applies minProb filtering to special tokens", async () => {
+    const table: Record<string, number[]> = {
+      "": makeDistWithSpecial({ 97: 0.5 }, [0.3, 0.2]),
+    };
+    const lm = fromByteLevelModel(makeMockModel(table), [eos, pad]);
+    // minProb 0.25 excludes <pad> (0.2) but keeps <eos> (0.3) and a (0.5)
+    const result = await collect(lm([], 0, 1, 0.25));
+
+    expect(result).toHaveLength(2);
+    expect(result[0].token).toEqual(cp(97));
+    expect(result[1].token).toEqual(eos);
+  });
+
+  it("looks up a specific special token", async () => {
+    const table: Record<string, number[]> = {
+      "": makeDistWithSpecial({ 97: 0.5 }, [0.3, 0.2]),
+    };
+    const lm = fromByteLevelModel(makeMockModel(table), [eos, pad]);
+    const result = await collect(lm([], 0, 1, 0, eos));
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({ token: eos, start: 0.5, end: 0.8 });
+  });
+
+  it("looks up a specific special token that has zero probability", async () => {
+    const table: Record<string, number[]> = {
+      "": makeDistWithSpecial({ 97: 1.0 }, [0]),
+    };
+    const lm = fromByteLevelModel(makeMockModel(table), [eos]);
+    const result = await collect(lm([], 0, 1, 0, eos));
+
+    expect(result).toHaveLength(0);
+  });
+
+  it("returns no special tokens when specialTokens list is empty", async () => {
+    // Distribution has entries beyond 255 but no specialTokens registered
+    const table: Record<string, number[]> = {
+      "": makeDistWithSpecial({ 97: 0.5 }, [0.5]),
+    };
+    const lm = fromByteLevelModel(makeMockModel(table), []);
+    const result = await collect(lm([], 0, 1, 0));
+
+    expect(result).toHaveLength(1);
+    expect(result[0].token).toEqual(cp(97));
+  });
+
+  it("only-special-tokens distribution works", async () => {
+    const table: Record<string, number[]> = {
+      "": makeDistWithSpecial({}, [0.6, 0.4]),
+    };
+    const lm = fromByteLevelModel(makeMockModel(table), [eos, pad]);
+    const result = await collect(lm([], 0, 1, 0));
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ token: eos, start: 0, end: 0.6 });
+    expect(result[1]).toEqual({ token: pad, start: 0.6, end: 1.0 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// specificToken lookup (codepoint)
+// ---------------------------------------------------------------------------
+
+describe("specificToken lookup", () => {
+  it("looks up a single-byte codepoint", async () => {
+    const table: Record<string, number[]> = {
+      "": makeDist({ 97: 0.5, 98: 0.25, 99: 0.25 }),
+    };
+    const lm = fromByteLevelModel(makeMockModel(table), []);
+    const result = await collect(lm([], 0, 1, 0, cp(98)));
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({ token: cp(98), start: 0.5, end: 0.75 });
+  });
+
+  it("looks up a multi-byte codepoint", async () => {
+    const table: Record<string, number[]> = {
+      "": makeDist({ 97: 0.5, 0xc3: 0.5 }),
+      c3: makeDist({ 0xa8: 0.5, 0xa9: 0.5 }),
+    };
+    const lm = fromByteLevelModel(makeMockModel(table), []);
+    const result = await collect(lm([], 0, 1, 0, cp(0xe9)));
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({ token: cp(0xe9), start: 0.75, end: 1.0 });
   });
 });
 

@@ -1,14 +1,18 @@
-import type { Scene, SceneNode } from "./types";
+import type { Scene, SceneNode, WidgetToken } from "./types";
 
-/** Display label for a Unicode codepoint token. */
-function label(cp: number): string {
+/** Display label for a widget token. */
+function label(token: WidgetToken): string {
+  if (token.type === "special") return token.label;
+  const cp = token.codepoint;
   if (cp === 32) return "\u25A1"; // □
   if (cp === 10) return "\u23CE"; // ⏎
   return String.fromCodePoint(cp);
 }
 
-/** CSS color for a Unicode codepoint token at a given depth. */
-function color(cp: number, depth: number): string {
+/** CSS color for a widget token at a given depth. */
+function color(token: WidgetToken, depth: number): string {
+  if (token.type === "special") return "hsl(15, 60%, 45%)";
+  const cp = token.codepoint;
   // Space: white
   if (cp === 32) return "#ffffff";
   // Lowercase a-z: hue cycles by depth between light green (120) and cyan (180)
@@ -38,7 +42,7 @@ function color(cp: number, depth: number): string {
 async function renderNodes(
   nodeCtx: CanvasRenderingContext2D,
   labelCtx: CanvasRenderingContext2D,
-  nodes: AsyncIterable<SceneNode<number>>,
+  nodes: AsyncIterable<SceneNode<WidgetToken>>,
   nodeWidth: number,
   height: number,
   signal: AbortSignal,
@@ -108,7 +112,7 @@ async function renderNodes(
 export async function renderScene(
   nodeCtx: CanvasRenderingContext2D,
   labelCtx: CanvasRenderingContext2D,
-  scene: Scene<number>,
+  scene: Scene<WidgetToken>,
   nodeWidth: number,
   height: number,
   signal: AbortSignal,

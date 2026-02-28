@@ -4,7 +4,14 @@
  */
 import { mergeAsyncIterables } from "./async-iterables";
 import { createTrieCache } from "./trie-cache";
-import { type CDFView, type LanguageModel, type TokenCDFExtent } from "./types";
+import {
+  type CDFView,
+  type LanguageModel,
+  type SpecialToken,
+  type TokenCDFExtent,
+  type UnicodeCodepoint,
+  type WidgetToken,
+} from "./types";
 
 // ---------------------------------------------------------------------------
 // UTF-8 helpers
@@ -12,6 +19,21 @@ import { type CDFView, type LanguageModel, type TokenCDFExtent } from "./types";
 
 /** Encode a codepoint sequence to UTF-8 bytes. */
 function codepointsToUtf8(codepoints: readonly number[]): Uint8Array {
+  return new TextEncoder().encode(String.fromCodePoint(...codepoints));
+}
+
+/**
+ * Encode a WidgetToken prefix to UTF-8 bytes for the byte-level model.
+ * UnicodeCodepoints are encoded as UTF-8; SpecialTokens have no byte
+ * representation (prefix encoding for special tokens is not yet supported).
+ */
+function widgetPrefixToBytes(prefix: readonly WidgetToken[]): Uint8Array {
+  const codepoints: number[] = [];
+  for (const token of prefix) {
+    if (token.type === "codepoint") {
+      codepoints.push(token.codepoint);
+    }
+  }
   return new TextEncoder().encode(String.fromCodePoint(...codepoints));
 }
 
@@ -52,9 +74,10 @@ function decodeUtf8Bytes(bytes: number[]): number {
 // ---------------------------------------------------------------------------
 
 /**
- * A byte-level language model.  Returns exactly 256 probabilities (bytes
- * 0–255) in order, including zero-probability bytes.  `dist[b]` is the
- * probability of byte `b`.
+ * A byte-level language model.  Returns probabilities in index order,
+ * including zero-probability entries.  Indices 0–255 are byte probabilities;
+ * indices ≥ 256, if present, are special-token probabilities.
+ * `dist[b]` is the probability of byte/token `b`.
  */
 export type ByteLevelModel = (
   bytePrefix: Uint8Array,
@@ -111,13 +134,14 @@ async function* expandMultiByte(
   rangeStart: number,
   rangeEnd: number,
   minProb: number,
-): AsyncGenerator<TokenCDFExtent<number>> {
+): AsyncGenerator<TokenCDFExtent<UnicodeCodepoint>> {
   if (partialBytes.length === totalBytes) {
     const start = cumStart;
     const end = cumStart + probSoFar;
     if (end < rangeStart || start > rangeEnd) return;
     if (end - start < minProb) return;
-    yield { token: decodeUtf8Bytes(partialBytes), start, end };
+    const codepoint = decodeUtf8Bytes(partialBytes);
+    yield { token: { type: "codepoint", codepoint }, start, end };
     return;
   }
 
@@ -127,7 +151,8 @@ async function* expandMultiByte(
   // Single pass: accumulate cumulative positions for ALL non-zero
   // continuation bytes (so later sub-groups are positioned correctly),
   // but only recurse into those that pass the range/size filters.
-  const subtrees: AsyncIterable<TokenCDFExtent<number>>[] = [];
+  // Only bytes 0–255 are considered; special-token indices are ignored.
+  const subtrees: AsyncIterable<TokenCDFExtent<UnicodeCodepoint>>[] = [];
   let cum = cumStart;
   for (let b = 0; b < 256; b++) {
     if (dist[b] === 0) continue;
@@ -161,16 +186,28 @@ async function* expandMultiByte(
 // ---------------------------------------------------------------------------
 
 /**
- * Look up a single codepoint's cumulative extent in the byte-level model.
- * Returns the TokenCDFExtent for the codepoint, or null if the model assigns it
- * zero probability at any byte level.
+ * Look up a single token's cumulative extent in the byte-level model.
+ * For UnicodeCodepoints, traces through the UTF-8 byte chain.
+ * For SpecialTokens, looks up the token's index in the first-byte distribution.
+ * Returns null if the model assigns zero probability.
  */
 async function lookupSpecificToken(
   model: (prefix: Uint8Array, minProb: number) => Promise<readonly number[]>,
   bytePrefix: Uint8Array,
-  codepoint: number,
-): Promise<TokenCDFExtent<number> | null> {
-  const targetBytes = [...codepointsToUtf8([codepoint])];
+  token: WidgetToken,
+): Promise<TokenCDFExtent<WidgetToken> | null> {
+  if (token.type === "special") {
+    const dist = await model(bytePrefix, 2);
+    if (token.index >= dist.length || dist[token.index] === 0) return null;
+
+    let cumStart = 0;
+    for (let b = 0; b < token.index; b++) {
+      cumStart += dist[b];
+    }
+    return { token, start: cumStart, end: cumStart + dist[token.index] };
+  }
+
+  const targetBytes = [...codepointsToUtf8([token.codepoint])];
 
   // Fire all byte-level queries in parallel — the prefix for level i
   // is bytePrefix + targetBytes[0..i), which is known upfront.
@@ -198,7 +235,11 @@ async function lookupSpecificToken(
     probSoFar *= dist[targetByte];
   }
 
-  return { token: codepoint, start: cumStart, end: cumStart + probSoFar };
+  return {
+    token,
+    start: cumStart,
+    end: cumStart + probSoFar,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -206,11 +247,12 @@ async function lookupSpecificToken(
 // ---------------------------------------------------------------------------
 
 /**
- * Adapt a byte-level UTF-8 model into a codepoint-level CDFView.
+ * Adapt a byte-level UTF-8 model into a WidgetToken-level CDFView.
  *
  * The byte-level model predicts the next byte given a UTF-8 byte prefix.
- * It must return exactly 256 probabilities summing to 1, with zero
- * probability for any illegal UTF-8 continuation.
+ * Its distribution covers bytes 0–255 and optionally special tokens at
+ * indices ≥ 256.  Special tokens are yielded directly from the first-byte
+ * distribution; continuation-byte distributions ignore special-token indices.
  *
  * Byte-level model calls are minimised:
  * - 1 call for the first-byte distribution per query.
@@ -225,22 +267,23 @@ async function lookupSpecificToken(
  * depth run concurrently, yielding results as they arrive.
  *
  * Cumulative extents are deterministic (the loops accumulate over ALL
- * non-zero bytes in fixed order, regardless of the query window) so
- * that a codepoint's position depends only on the prefix.
+ * non-zero entries in fixed order, regardless of the query window) so
+ * that a token's position depends only on the prefix.
  */
 export function fromByteLevelModel(
   byteLevelModel: ByteLevelModel,
-): CDFView<readonly number[], number> {
+  specialTokens: SpecialToken[],
+): CDFView<readonly WidgetToken[], WidgetToken> {
   return async function* (
-    prefix: readonly number[],
+    prefix: readonly WidgetToken[],
     rangeStart: number,
     rangeEnd: number,
     minProb: number,
-    specificToken?: number,
+    specificToken?: WidgetToken,
   ) {
-    const bytePrefix = codepointsToUtf8(prefix);
+    const bytePrefix = widgetPrefixToBytes(prefix);
 
-    // Fast path: look up a single codepoint's extent.
+    // Fast path: look up a single token's extent.
     if (specificToken !== undefined) {
       const result = await lookupSpecificToken(
         byteLevelModel,
@@ -254,12 +297,11 @@ export function fromByteLevelModel(
     // 1. First-byte distribution (1 model call).
     const firstByteDist = await byteLevelModel(bytePrefix, minProb);
 
-    // 2. Cumulative start position for every first-byte group.
-    //    P(all codepoints starting with byte b) = P(b), so the
-    //    cumulative over first bytes gives correct group boundaries.
-    const firstByteCumStart: number[] = new Array(256);
+    // 2. Cumulative start position for every entry in the distribution
+    //    (bytes 0–255 plus any special tokens at indices ≥ 256).
+    const firstByteCumStart: number[] = new Array(firstByteDist.length);
     let cum = 0;
-    for (let b = 0; b < 256; b++) {
+    for (let b = 0; b < firstByteDist.length; b++) {
       firstByteCumStart[b] = cum;
       if (firstByteDist[b] > 0) {
         cum += firstByteDist[b];
@@ -273,11 +315,12 @@ export function fromByteLevelModel(
       const end = firstByteCumStart[b] + firstByteDist[b];
       if (end < rangeStart || start > rangeEnd) continue;
       if (end - start < minProb) continue;
-      yield { token: b, start, end };
+      const token: UnicodeCodepoint = { type: "codepoint", codepoint: b };
+      yield { token, start, end };
     }
 
     // 4. Multi-byte groups: expand in parallel, yield as each resolves.
-    const expansions: AsyncIterable<TokenCDFExtent<number>>[] = [];
+    const expansions: AsyncIterable<TokenCDFExtent<WidgetToken>>[] = [];
 
     for (let b = 0xc0; b <= 0xff; b++) {
       if (firstByteDist[b] === 0) continue;
@@ -303,6 +346,21 @@ export function fromByteLevelModel(
           rangeEnd,
           minProb,
         ),
+      );
+    }
+
+    // 5. Special tokens (indices ≥ 256): yield directly.
+    for (const st of specialTokens) {
+      if (st.index >= firstByteDist.length) continue;
+      if (firstByteDist[st.index] === 0) continue;
+      const start = firstByteCumStart[st.index];
+      const end = start + firstByteDist[st.index];
+      if (end < rangeStart || start > rangeEnd) continue;
+      if (end - start < minProb) continue;
+      expansions.push(
+        (async function* () {
+          yield { token: st as WidgetToken, start, end };
+        })(),
       );
     }
 
@@ -421,11 +479,11 @@ function legalUtf8NextByte(prefix: Uint8Array): (byte: number) => boolean {
  * Each unique prefix is computed at most once; subsequent queries
  * return the cached result.  Old entries are evicted automatically.
  */
-export function trieCache(
-  model: LanguageModel<Uint8Array>,
-): LanguageModel<Uint8Array> {
+export function trieCache<P extends Iterable<number>>(
+  model: LanguageModel<P>,
+): LanguageModel<P> {
   const cache = createTrieCache<Promise<readonly number[]>>();
-  return (prefix: Uint8Array) => cache.getOrSet(prefix, () => model(prefix));
+  return (prefix: P) => cache.getOrSet(prefix, () => model(prefix));
 }
 
 /**

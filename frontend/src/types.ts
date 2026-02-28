@@ -2,6 +2,25 @@
  * Core domain types for the unit-square model.
  */
 
+/** A Unicode codepoint token. */
+export interface UnicodeCodepoint {
+  readonly type: "codepoint";
+  readonly codepoint: number;
+}
+
+/** A special token with a model-specific index and human-readable label. */
+export interface SpecialToken {
+  readonly type: "special";
+  readonly index: number;
+  readonly label: string;
+}
+
+/**
+ * A token displayed in the widget: either a Unicode codepoint or a special
+ * token (e.g. `<im_start>`, `<eos>`).
+ */
+export type WidgetToken = UnicodeCodepoint | SpecialToken;
+
 /**
  * One entry in a next-token probability distribution, placed on the
  * cumulative-probability line.  `start` and `end` are the entry's
@@ -34,8 +53,9 @@ export type LanguageModel<P> = (prefix: P) => Promise<readonly number[]>;
  *
  * Implementations must ensure that:
  * - token extents do not overlap
- * - token extents have no holes between successive entries in the full distribution
  * - token extents don't vary between different calls with the same prefix; only the ordering and presence may change
+ * - each token yielded per call is unique
+ * - tokens are yielded as soon as they can be (don't wait for earlier tokens)
  *
  * Tokens may be yielded in any order.
  *

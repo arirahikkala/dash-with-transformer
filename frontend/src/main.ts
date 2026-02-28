@@ -1,4 +1,4 @@
-import type { Cursor, CDFView } from "./types";
+import type { Cursor, CDFView, WidgetToken } from "./types";
 import { createBackendClient } from "./remote/backend";
 import { forceCleanUtf8, fromByteLevelModel, trieCache } from "./models";
 import { normalizeCursor } from "./cursor";
@@ -7,8 +7,12 @@ import { renderScene } from "./render";
 
 import { createCachedLSTMPredictor } from "./lstm/lstm";
 
-function prefixToString(prefix: readonly number[]): string {
-  return String.fromCodePoint(...prefix);
+function prefixToString(prefix: readonly WidgetToken[]): string {
+  return prefix
+    .map((t) =>
+      t.type === "codepoint" ? String.fromCodePoint(t.codepoint) : t.label,
+    )
+    .join("");
 }
 
 // ---------------------------------------------------------------------------
@@ -28,7 +32,7 @@ const MAX_DT = 0.05;
 function createModel(
   backendUrl: string,
   remoteModelCallPrefix: string,
-): CDFView<readonly number[], number> {
+): CDFView<readonly WidgetToken[], WidgetToken> {
   const { predictBytes } = createBackendClient(backendUrl);
   const prefixBytes = new TextEncoder().encode(remoteModelCallPrefix);
 
@@ -42,7 +46,7 @@ function createModel(
         }
       : predictBytes;
 
-  return fromByteLevelModel(byteLevelModel);
+  return fromByteLevelModel(byteLevelModel, []);
 }
 
 async function main() {
@@ -74,9 +78,10 @@ async function main() {
   modeSelect.value = mode;
 
   // LSTM model caching
-  let lstmModel: CDFView<readonly number[], number> | null = null;
-  let lstmLoadPromise: Promise<CDFView<readonly number[], number>> | null =
-    null;
+  let lstmModel: CDFView<readonly WidgetToken[], WidgetToken> | null = null;
+  let lstmLoadPromise: Promise<
+    CDFView<readonly WidgetToken[], WidgetToken>
+  > | null = null;
 
   function updateModeUI() {
     const isBackend = mode === "backend";
@@ -96,7 +101,9 @@ async function main() {
     window.location.hash = params.toString();
   }
 
-  async function loadLSTMModel(): Promise<CDFView<readonly number[], number>> {
+  async function loadLSTMModel(): Promise<
+    CDFView<readonly WidgetToken[], WidgetToken>
+  > {
     if (!lstmLoadPromise) {
       lstmLoadPromise = (async () => {
         const base = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -104,8 +111,9 @@ async function main() {
           statusEl.textContent = msg;
         });
         const cleanModel = trieCache(forceCleanUtf8(predict));
-        return fromByteLevelModel(async (prefix, _minProb) =>
-          cleanModel(prefix),
+        return fromByteLevelModel(
+          async (prefix, _minProb) => cleanModel(prefix),
+          [],
         );
       })();
     }
@@ -163,7 +171,7 @@ async function main() {
   const labelCtx = labelCanvas.getContext("2d")!;
 
   // --- Cursor state ---
-  let cursor: Cursor<number> = { prefix: [], x: 0.5, y: 0.5 };
+  let cursor: Cursor<WidgetToken> = { prefix: [], x: 0.5, y: 0.5 };
 
   // --- Mouse state ---
   let mouseDown = false;
