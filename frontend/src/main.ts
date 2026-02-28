@@ -1,6 +1,11 @@
-import type { Cursor, CDFView, WidgetToken } from "./types";
+import type { Cursor, CDFView, WidgetToken, LanguageModel } from "./types";
 import { createBackendClient } from "./remote/backend";
-import { forceCleanUtf8, fromByteLevelModel, trieCache } from "./models";
+import {
+  forceCleanUtf8,
+  fromByteLevelModel,
+  interpolate,
+  trieCache,
+} from "./models";
 import { normalizeCursor } from "./cursor";
 import { buildScene } from "./scene";
 import { renderScene } from "./render";
@@ -29,41 +34,15 @@ const SPEED = 2;
 /** Cap dt to avoid huge jumps when the tab regains focus. */
 const MAX_DT = 0.05;
 
-function createModel(
-  backendUrl: string,
-  remoteModelCallPrefix: string,
-): CDFView<readonly WidgetToken[], WidgetToken> {
-  const { predictBytes } = createBackendClient(backendUrl);
-  const prefixBytes = new TextEncoder().encode(remoteModelCallPrefix);
-
-  const byteLevelModel =
-    prefixBytes.length > 0
-      ? (prefix: Uint8Array, minProb: number) => {
-          const full = new Uint8Array(prefixBytes.length + prefix.length);
-          full.set(prefixBytes);
-          full.set(prefix, prefixBytes.length);
-          return predictBytes(full, minProb);
-        }
-      : predictBytes;
-
-  return fromByteLevelModel(byteLevelModel, []);
-}
-
 async function main() {
   const hashParams = new URLSearchParams(window.location.hash.slice(1));
   let backendUrl = hashParams.get("backendUrl") ?? "http://localhost:8000";
   let remoteModelCallPrefix = hashParams.get("remoteModelCallPrefix") ?? "";
-  let mode = hashParams.get("mode") ?? "lstm";
-
-  let model = createModel(backendUrl, remoteModelCallPrefix);
+  let sliderValue = parseFloat(hashParams.get("mix") ?? "0");
+  if (!Number.isFinite(sliderValue)) sliderValue = 0;
+  sliderValue = Math.max(0, Math.min(1, sliderValue));
 
   // --- Config inputs ---
-  const modeSelect = document.getElementById(
-    "inference-mode",
-  ) as HTMLSelectElement;
-  const backendUrlLabel = document.getElementById(
-    "backend-url-label",
-  ) as HTMLElement;
   const statusEl = document.getElementById("status") as HTMLElement;
   const backendUrlInput = document.getElementById(
     "backend-url",
@@ -71,28 +50,66 @@ async function main() {
   const modelPrefixInput = document.getElementById(
     "model-prefix",
   ) as HTMLTextAreaElement;
-  const prefixLabel = document.getElementById("prefix-label") as HTMLElement;
+  const mixSlider = document.getElementById("mix-slider") as HTMLInputElement;
 
   backendUrlInput.value = backendUrl;
   modelPrefixInput.value = remoteModelCallPrefix;
-  modeSelect.value = mode;
+  mixSlider.value = String(sliderValue);
 
-  // LSTM model caching
-  let lstmModel: CDFView<readonly WidgetToken[], WidgetToken> | null = null;
-  let lstmLoadPromise: Promise<
-    CDFView<readonly WidgetToken[], WidgetToken>
-  > | null = null;
+  // --- LSTM side (loaded eagerly) ---
+  statusEl.style.display = "";
+  const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const { predict: lstmPredict } = await createCachedLSTMPredictor(
+    base,
+    (msg) => {
+      statusEl.textContent = msg;
+    },
+  );
+  statusEl.style.display = "none";
+  const lstmByteLM: LanguageModel<Uint8Array> = trieCache(
+    forceCleanUtf8(lstmPredict),
+  );
 
-  function updateModeUI() {
-    const isBackend = mode === "backend";
-    backendUrlLabel.style.display = isBackend ? "" : "none";
-    prefixLabel.style.display = isBackend ? "" : "none";
-    statusEl.style.display = isBackend ? "none" : "";
+  // --- Remote side ---
+  let currentMinProb = 0;
+
+  function createRemoteLM(): LanguageModel<Uint8Array> {
+    const { predictBytes } = createBackendClient(backendUrl);
+    const prefixBytes = new TextEncoder().encode(remoteModelCallPrefix);
+    return (prefix: Uint8Array) => {
+      const full = new Uint8Array(prefixBytes.length + prefix.length);
+      full.set(prefixBytes);
+      full.set(prefix, prefixBytes.length);
+      return predictBytes(full, currentMinProb);
+    };
   }
 
+  let remoteLM = createRemoteLM();
+
+  // --- Interpolation ---
+  let interpolated = interpolate([
+    { model: lstmByteLM, weight: 1 - sliderValue },
+    { model: remoteLM, weight: sliderValue },
+  ]);
+
+  function rebuildInterpolation() {
+    interpolated = interpolate([
+      { model: lstmByteLM, weight: 1 - sliderValue },
+      { model: remoteLM, weight: sliderValue },
+    ]);
+  }
+
+  // --- Stable model (never reassigned) ---
+  const model: CDFView<readonly WidgetToken[], WidgetToken> =
+    fromByteLevelModel((prefix, minProb) => {
+      currentMinProb = minProb;
+      return interpolated(prefix);
+    }, []);
+
+  // --- Hash ---
   function updateHash() {
     const params = new URLSearchParams();
-    params.set("mode", mode);
+    if (sliderValue !== 0) params.set("mix", String(sliderValue));
     if (backendUrl !== "http://localhost:8000") {
       params.set("backendUrl", backendUrl);
     }
@@ -101,63 +118,32 @@ async function main() {
     window.location.hash = params.toString();
   }
 
-  async function loadLSTMModel(): Promise<
-    CDFView<readonly WidgetToken[], WidgetToken>
-  > {
-    if (!lstmLoadPromise) {
-      lstmLoadPromise = (async () => {
-        const base = import.meta.env.BASE_URL.replace(/\/$/, "");
-        const { predict } = await createCachedLSTMPredictor(base, (msg) => {
-          statusEl.textContent = msg;
-        });
-        const cleanModel = trieCache(forceCleanUtf8(predict));
-        return fromByteLevelModel(
-          async (prefix, _minProb) => cleanModel(prefix),
-          [],
-        );
-      })();
-    }
-    lstmModel = await lstmLoadPromise;
-    return lstmModel;
-  }
-
+  // --- Config change handlers ---
   function applyConfigChange() {
     const newUrl = backendUrlInput.value;
     const newPrefix = modelPrefixInput.value;
     if (newUrl === backendUrl && newPrefix === remoteModelCallPrefix) return;
     backendUrl = newUrl;
     remoteModelCallPrefix = newPrefix;
+    remoteLM = createRemoteLM();
+    rebuildInterpolation();
     updateHash();
-
-    if (mode === "backend") {
-      model = createModel(backendUrl, remoteModelCallPrefix);
-      renderController?.abort();
-      renderController = new AbortController();
-      render(renderController.signal);
-    }
+    renderController?.abort();
+    renderController = new AbortController();
+    render(renderController.signal);
   }
 
   backendUrlInput.addEventListener("blur", applyConfigChange);
   modelPrefixInput.addEventListener("blur", applyConfigChange);
 
-  modeSelect.addEventListener("change", async () => {
-    mode = modeSelect.value;
-    updateModeUI();
+  mixSlider.addEventListener("input", () => {
+    sliderValue = parseFloat(mixSlider.value);
+    rebuildInterpolation();
     updateHash();
-    if (mode === "lstm") {
-      const loaded = await loadLSTMModel();
-      if (mode !== "lstm") return;
-      model = loaded;
-    } else {
-      model = createModel(backendUrl, remoteModelCallPrefix);
-    }
-    cursor = { prefix: cursor.prefix, x: 0.0, y: 0.5 };
     renderController?.abort();
     renderController = new AbortController();
     render(renderController.signal);
   });
-
-  updateModeUI();
 
   // --- DOM elements ---
   const prefixEl = document.getElementById("prefix-display")!;
@@ -268,11 +254,6 @@ async function main() {
     }
 
     requestAnimationFrame(frame);
-  }
-
-  // Initialize model based on mode
-  if (mode === "lstm") {
-    model = await loadLSTMModel();
   }
 
   // Initial render, then start loop

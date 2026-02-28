@@ -112,12 +112,11 @@
         height: 6rem;
         resize: vertical;
       }
-      #config-bar select {
-        font-family: monospace;
+      #mix-bar {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
         font-size: 0.85rem;
-        padding: 0.2rem 0.4rem;
-        border: 1px solid #ccc;
-        border-radius: 3px;
       }
       #status {
         font-size: 0.85rem;
@@ -141,14 +140,12 @@
         <div class="crosshair-h"></div>
       </div>
     </div>
+    <div id="mix-bar">
+      <span>LSTM</span>
+      <input type="range" id="mix-slider" min="0" max="1" step="0.01" value="0" />
+      <span>Remote</span>
+    </div>
     <div id="config-bar">
-      <label
-        >Mode
-        <select id="inference-mode">
-          <option value="backend">Remote</option>
-          <option value="lstm">CPU (LSTM)</option>
-        </select>
-      </label>
       <label id="backend-url-label"
         >Backend URL <input id="backend-url" type="text" spellcheck="false"
       /></label>
