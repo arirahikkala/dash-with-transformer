@@ -5,7 +5,7 @@ import {
   interpolate,
   type ByteLevelModel,
 } from "./models";
-import { adaptModel, type CDFView, type LanguageModel } from "./types";
+import type { LanguageModel } from "./types";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -657,9 +657,9 @@ describe("edge cases", () => {
 // ---------------------------------------------------------------------------
 
 describe("interpolate", () => {
-  /** Create a model that always returns the given distribution (ignores prefix). */
-  function simpleModel(dist: number[]): CDFView<string, number> {
-    return adaptModel(async () => dist);
+  /** Create a LanguageModel that always returns the given distribution. */
+  function simpleModel(dist: number[]): LanguageModel<string> {
+    return async () => dist;
   }
 
   it("computes correct mixture probabilities", async () => {
@@ -670,13 +670,9 @@ describe("interpolate", () => {
       { model: a, weight: 1 },
       { model: b, weight: 1 },
     ]);
-    const result = await collect(mixed("", 0, 1, 0));
+    const result = await mixed("");
 
-    expect(result).toHaveLength(2);
-    // 0.5 * 0.75 + 0.5 * 0.25 = 0.5 for both tokens
-    for (const entry of result) {
-      expect(entry.end - entry.start).toBeCloseTo(0.5);
-    }
+    expect(result).toEqual([0, 0.5, 0.5]);
   });
 
   it("weight=0 on B reproduces model A exactly", async () => {
@@ -687,14 +683,9 @@ describe("interpolate", () => {
       { model: a, weight: 1 },
       { model: b, weight: 0 },
     ]);
-    const [mixResult, aResult] = await Promise.all([
-      collect(mixed("", 0, 1, 0)),
-      collect(a("", 0, 1, 0)),
-    ]);
+    const result = await mixed("");
 
-    const sort = <T extends { start: number }>(arr: T[]) =>
-      [...arr].sort((a, b) => a.start - b.start);
-    expect(sort(mixResult)).toEqual(sort(aResult));
+    expect(result).toEqual([0, 0.6, 0.4]);
   });
 
   it("weight=0 on A reproduces model B exactly", async () => {
@@ -705,17 +696,29 @@ describe("interpolate", () => {
       { model: a, weight: 0 },
       { model: b, weight: 1 },
     ]);
-    const [mixResult, bResult] = await Promise.all([
-      collect(mixed("", 0, 1, 0)),
-      collect(b("", 0, 1, 0)),
-    ]);
+    const result = await mixed("");
 
-    const sort = <T extends { start: number }>(arr: T[]) =>
-      [...arr].sort((a, b) => a.start - b.start);
-    expect(sort(mixResult)).toEqual(sort(bResult));
+    expect(result).toEqual([0, 0.3, 0.7]);
   });
 
-  it("produces contiguous entries summing to 1", async () => {
+  it("weight=0 model is not queried", async () => {
+    let called = false;
+    const a = simpleModel([0, 0.6, 0.4]);
+    const b: LanguageModel<string> = async () => {
+      called = true;
+      return [0, 0.1, 0.9];
+    };
+
+    const mixed = interpolate([
+      { model: a, weight: 1 },
+      { model: b, weight: 0 },
+    ]);
+    await mixed("");
+
+    expect(called).toBe(false);
+  });
+
+  it("produces probabilities summing to 1", async () => {
     const a = simpleModel([0, 0.3, 0.5, 0.2]);
     const b = simpleModel([0, 0.4, 0.4, 0.2]);
 
@@ -723,95 +726,43 @@ describe("interpolate", () => {
       { model: a, weight: 0.6 },
       { model: b, weight: 0.4 },
     ]);
-    const result = (await collect(mixed("", 0, 1, 0))).sort(
-      (a, b) => a.start - b.start,
-    );
+    const result = await mixed("");
+    const sum = result.reduce((s, p) => s + p, 0);
 
-    expect(result[0].start).toBeCloseTo(0);
-    for (let i = 1; i < result.length; i++) {
-      expect(result[i].start).toBeCloseTo(result[i - 1].end);
-    }
-    expect(result[result.length - 1].end).toBeCloseTo(1);
+    expect(sum).toBeCloseTo(1);
   });
 
-  it("resolves tokens below minProb in one model via specificToken", async () => {
-    const a = simpleModel([0, 0.8, 0.2]);
-    const b = simpleModel([0, 0.2, 0.8]);
+  it("handles different vocabulary sizes", async () => {
+    const a = simpleModel([0.5, 0.5]);
+    const b = simpleModel([0.25, 0.25, 0.25, 0.25]);
 
     const mixed = interpolate([
       { model: a, weight: 1 },
       { model: b, weight: 1 },
     ]);
-    const result = (await collect(mixed("", 0, 1, 0.3))).sort(
-      (a, b) => a.start - b.start,
-    );
+    const result = await mixed("");
 
-    // Both tokens have mixture probability 0.5 >= 0.3,
-    // but each is below minProb in one model (0.2 < 0.3).
-    expect(result).toHaveLength(2);
-    expect(result[0]).toEqual({ token: 1, start: 0, end: 0.5 });
-    expect(result[1]).toEqual({ token: 2, start: 0.5, end: 1.0 });
+    // a contributes [0.25, 0.25, 0, 0], b contributes [0.125, 0.125, 0.125, 0.125]
+    expect(result).toHaveLength(4);
+    expect(result[0]).toBeCloseTo(0.375);
+    expect(result[1]).toBeCloseTo(0.375);
+    expect(result[2]).toBeCloseTo(0.125);
+    expect(result[3]).toBeCloseTo(0.125);
   });
 
-  it("specificToken returns the correct entry", async () => {
-    const a = simpleModel([0, 0.75, 0.25]);
-    const b = simpleModel([0, 0.25, 0.75]);
-
-    const mixed = interpolate([
-      { model: a, weight: 1 },
-      { model: b, weight: 1 },
-    ]);
-    const full = await collect(mixed("", 0, 1, 0));
-    const specific = await collect(mixed("", 0, 1, 0, 2));
-
-    expect(specific).toHaveLength(1);
-    expect(specific[0]).toEqual(full.find((e) => e.token === 2));
-  });
-
-  it("respects minProb filtering", async () => {
-    const a = simpleModel([0, 0.8, 0.2]);
-    const b = simpleModel([0, 0.8, 0.2]);
-
-    const mixed = interpolate([
-      { model: a, weight: 1 },
-      { model: b, weight: 1 },
-    ]);
-    const result = await collect(mixed("", 0, 1, 0.3));
-
-    expect(result).toHaveLength(1);
-    expect(result[0].token).toBe(1);
-    // Position must match the unfiltered distribution
-    expect(result[0].start).toBe(0);
-    expect(result[0].end - result[0].start).toBeCloseTo(0.8);
-  });
-
-  it("respects range filtering", async () => {
-    const a = simpleModel([0, 0.5, 0.5]);
-    const b = simpleModel([0, 0.5, 0.5]);
-
-    const mixed = interpolate([
-      { model: a, weight: 1 },
-      { model: b, weight: 1 },
-    ]);
-    // Token 1 at [0, 0.5], token 2 at [0.5, 1.0]
-    const result = await collect(mixed("", 0.6, 1, 0));
-
-    expect(result).toHaveLength(1);
-    expect(result[0].token).toBe(2);
-  });
-
-  it("queries both models in parallel", async () => {
+  it("queries all models in parallel", async () => {
     let activeCalls = 0;
     let maxConcurrency = 0;
 
-    const makeSlowModel = (dist: number[]): CDFView<string, number> =>
-      adaptModel(async () => {
+    const makeSlowModel =
+      (dist: number[]): LanguageModel<string> =>
+      async () => {
         activeCalls++;
         maxConcurrency = Math.max(maxConcurrency, activeCalls);
         await new Promise((resolve) => setTimeout(resolve, 10));
         activeCalls--;
         return dist;
-      });
+      };
 
     const a = makeSlowModel([0, 0.5, 0.5]);
     const b = makeSlowModel([0, 0.5, 0.5]);
@@ -820,9 +771,28 @@ describe("interpolate", () => {
       { model: a, weight: 1 },
       { model: b, weight: 1 },
     ]);
-    await collect(mixed("", 0, 1, 0));
+    await mixed("");
 
     expect(maxConcurrency).toBe(2);
+  });
+
+  it("throws on empty components", () => {
+    expect(() => interpolate([])).toThrow("at least one model");
+  });
+
+  it("throws on negative weight", () => {
+    expect(() =>
+      interpolate([{ model: simpleModel([1]), weight: -1 }]),
+    ).toThrow("Negative weight");
+  });
+
+  it("throws when all weights are zero", () => {
+    expect(() =>
+      interpolate([
+        { model: simpleModel([1]), weight: 0 },
+        { model: simpleModel([1]), weight: 0 },
+      ]),
+    ).toThrow("Total weight must be positive");
   });
 });
 

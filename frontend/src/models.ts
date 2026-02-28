@@ -2,18 +2,9 @@
  * Adapt a byte-level UTF-8 language model into a codepoint-level model.
  * Also: interpolation between arbitrary language models.
  */
-import {
-  mergeAsyncIterables,
-  raceAsyncIterables,
-  racePromises,
-} from "./async-iterables";
+import { mergeAsyncIterables } from "./async-iterables";
 import { createTrieCache } from "./trie-cache";
-import {
-  first,
-  type CDFView,
-  type LanguageModel,
-  type TokenCDFExtent,
-} from "./types";
+import { type CDFView, type LanguageModel, type TokenCDFExtent } from "./types";
 
 // ---------------------------------------------------------------------------
 // UTF-8 helpers
@@ -327,31 +318,16 @@ export function fromByteLevelModel(
  * Interpolate between one or more language models, creating a per-conditional
  * weighted mixture.
  *
- * All models must have their alphabets in the same order: they may yield
- * values in different orders, but the CDF must be stacked in the same token
- * ordering.  Under this assumption, a token's interpolated extent is simply
- * the weighted combination of its extents across all models:
+ * Models may have different vocabulary sizes; the result is in the space of
+ * the largest vocabulary, with missing tokens treated as probability 0.
  *
- *     start_mix = Σ_i  w_i * start_i
- *     end_mix   = Σ_i  w_i * end_i
- *
- * The implementation streams results from all models in parallel:
- * 1. All models are queried with the caller's minProb (any token with
- *    mixture probability >= minProb must have prob >= minProb in at least
- *    one model, since Σw_i = 1).
- * 2. Results are raced; as soon as a token has been received from all
- *    models, its interpolated extent is yielded immediately.
- * 3. After all streams exhaust, remainder tokens (not returned by every
- *    model) are resolved via parallel specificToken queries.
+ * Components with weight 0 are not queried at all.
  *
  * Weights are normalized to sum to 1. Negative weights throw an error.
  */
-export function interpolate<P, T>(
-  components: { model: CDFView<P, T>; weight: number }[],
-): CDFView<P, T> {
-  if (components.length === 1) {
-    return components[0].model;
-  }
+export function interpolate<P>(
+  components: { model: LanguageModel<P>; weight: number }[],
+): LanguageModel<P> {
   if (components.length === 0) {
     throw new Error("interpolate requires at least one model");
   }
@@ -360,101 +336,28 @@ export function interpolate<P, T>(
       throw new Error(`Negative weight: ${weight}`);
     }
   }
-  const totalWeight = components.reduce((s, c) => s + c.weight, 0);
-  if (totalWeight === 0) {
+  const active = components.filter((c) => c.weight > 0);
+  if (active.length === 0) {
     throw new Error("Total weight must be positive");
   }
-  const weights = components.map((c) => c.weight / totalWeight);
-  const models = components.map((c) => c.model);
-  const n = models.length;
+  if (active.length === 1) {
+    return active[0].model;
+  }
+  const totalWeight = active.reduce((s, c) => s + c.weight, 0);
+  const weights = active.map((c) => c.weight / totalWeight);
+  const models = active.map((c) => c.model);
 
-  return async function* (
-    prefix,
-    rangeStart,
-    rangeEnd,
-    minProb,
-    specificToken?,
-  ) {
-    // Fast path: look up a single token's extent in all models.
-    if (specificToken !== undefined) {
-      const entries = await Promise.all(
-        models.map((m) => first(m(prefix, 0, 0, 0, specificToken))),
-      );
-      if (entries.some((e) => !e)) return;
-      let start = 0;
-      let end = 0;
-      for (let i = 0; i < n; i++) {
-        start += weights[i] * entries[i]!.start;
-        end += weights[i] * entries[i]!.end;
-      }
-      yield { token: specificToken, start, end };
-      return;
-    }
-
-    // Query all models with full range and the caller's minProb.
-    // Any token with mixture probability >= minProb must have probability
-    // >= minProb in at least one model (since Σw_i = 1).
-    const maps: Map<T, TokenCDFExtent<T>>[] = models.map(() => new Map());
-    const yielded = new Set<T>();
-
-    for await (const { value: entry, index } of raceAsyncIterables(
-      models.map((m) => m(prefix, 0, 1, minProb)),
-    )) {
-      maps[index].set(entry.token, entry);
-
-      // Check if all models have now reported this token.
-      if (maps.every((m) => m.has(entry.token))) {
-        const token = entry.token;
-        let start = 0;
-        let end = 0;
-        for (let i = 0; i < n; i++) {
-          const e = maps[i].get(token)!;
-          start += weights[i] * e.start;
-          end += weights[i] * e.end;
-        }
-        if (end >= rangeStart && start <= rangeEnd && end - start >= minProb) {
-          yielded.add(token);
-          yield { token, start, end };
-        }
+  return async (prefix) => {
+    const dists = await Promise.all(models.map((m) => m(prefix)));
+    const len = Math.max(...dists.map((d) => d.length));
+    const result = new Array(len).fill(0);
+    for (let i = 0; i < dists.length; i++) {
+      const d = dists[i];
+      for (let t = 0; t < d.length; t++) {
+        result[t] += weights[i] * d[t];
       }
     }
-
-    // Remainder: tokens that appeared in some but not all models' output.
-    // For each, query the missing models with specificToken.
-    const allTokens = new Set<T>();
-    for (const m of maps) {
-      for (const token of m.keys()) allTokens.add(token);
-    }
-
-    const remainderPromises: Promise<TokenCDFExtent<T> | null>[] = [];
-
-    for (const token of allTokens) {
-      if (yielded.has(token)) continue;
-      remainderPromises.push(
-        Promise.all(
-          models.map((m, i) =>
-            maps[i].has(token)
-              ? Promise.resolve(maps[i].get(token)!)
-              : first(m(prefix, 0, 1, 0, token)),
-          ),
-        ).then((entries) => {
-          if (entries.some((e) => !e)) return null;
-          let start = 0;
-          let end = 0;
-          for (let i = 0; i < n; i++) {
-            start += weights[i] * entries[i]!.start;
-            end += weights[i] * entries[i]!.end;
-          }
-          if (end < rangeStart || start > rangeEnd || end - start < minProb)
-            return null;
-          return { token, start, end };
-        }),
-      );
-    }
-
-    for await (const result of racePromises(remainderPromises)) {
-      if (result) yield result;
-    }
+    return result;
   };
 }
 
