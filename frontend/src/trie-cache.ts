@@ -1,5 +1,5 @@
 /**
- * A generic trie cache keyed on byte prefixes with generation-based eviction.
+ * A generic trie cache keyed on numeric prefixes with generation-based eviction.
  *
  * The generation counter advances only when a value is actually written (set
  * or first computation in getOrSet).  Read-only accesses stamp the path with
@@ -16,16 +16,16 @@ interface TrieNode<V> {
 
 export interface TrieCache<V> {
   /** Return the cached value for `prefix`, or undefined. Touches the path. */
-  get(prefix: Uint8Array): V | undefined;
+  get(prefix: Iterable<number>): V | undefined;
   /** Cache `value` at `prefix`. Touches the path. May trigger pruning. */
-  set(prefix: Uint8Array, value: V): void;
+  set(prefix: Iterable<number>, value: V): void;
   /** Return cached value or compute, cache, and return it. May trigger pruning. */
-  getOrSet(prefix: Uint8Array, compute: () => V): V;
+  getOrSet(prefix: Iterable<number>, compute: () => V): V;
   /** Remove the cached value for `prefix`. */
-  delete(prefix: Uint8Array): void;
+  delete(prefix: Iterable<number>): void;
   /** Walk the trie along `prefix` and return the deepest node that has a value. */
   findLongestPrefix(
-    prefix: Uint8Array,
+    prefix: Iterable<number>,
   ): { value: V; length: number } | undefined;
 }
 
@@ -41,11 +41,11 @@ export function createTrieCache<V>(
     node.generation = generation;
   }
 
-  function walk(prefix: Uint8Array): TrieNode<V> | undefined {
+  function walk(prefix: Iterable<number>): TrieNode<V> | undefined {
     let node = root;
     touch(node);
-    for (let i = 0; i < prefix.length; i++) {
-      const child = node.children.get(prefix[i]);
+    for (const key of prefix) {
+      const child = node.children.get(key);
       if (!child) return undefined;
       node = child;
       touch(node);
@@ -53,14 +53,14 @@ export function createTrieCache<V>(
     return node;
   }
 
-  function ensure(prefix: Uint8Array): TrieNode<V> {
+  function ensure(prefix: Iterable<number>): TrieNode<V> {
     let node = root;
     touch(node);
-    for (let i = 0; i < prefix.length; i++) {
-      let child = node.children.get(prefix[i]);
+    for (const key of prefix) {
+      let child = node.children.get(key);
       if (!child) {
         child = { children: new Map(), generation };
-        node.children.set(prefix[i], child);
+        node.children.set(key, child);
       }
       node = child;
       touch(node);
@@ -132,13 +132,15 @@ export function createTrieCache<V>(
       if ("value" in node) {
         best = { value: node.value!, length: 0 };
       }
-      for (let i = 0; i < prefix.length; i++) {
-        const child = node.children.get(prefix[i]);
+      let depth = 0;
+      for (const key of prefix) {
+        const child = node.children.get(key);
         if (!child) break;
         node = child;
+        depth++;
         touch(node);
         if ("value" in node) {
-          best = { value: node.value!, length: i + 1 };
+          best = { value: node.value!, length: depth };
         }
       }
       return best;
