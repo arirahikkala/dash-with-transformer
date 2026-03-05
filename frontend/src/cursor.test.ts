@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import type { CDFView, Cursor, TokenCDFExtent } from "./types";
 import { adaptModel } from "./types";
-import { normalizeCursor, cursorToGlobal } from "./cursor";
+import { normalizeCursor } from "./cursor";
+import { first } from "./types";
 
 // ---------------------------------------------------------------------------
 // Test language models
@@ -33,6 +34,39 @@ const deterministic = adaptModel<readonly number[]>(async () => [1.0]);
 
 /** Empty distribution — no continuations. */
 const empty = adaptModel<readonly number[]>(async () => []);
+
+// ---------------------------------------------------------------------------
+// cursorToGlobal — test-only helper
+// ---------------------------------------------------------------------------
+
+async function cursorToGlobal<T>(
+  model: CDFView<readonly T[], T>,
+  state: Cursor<T>,
+): Promise<{ x: number; y: number }> {
+  let size = 1;
+  let top = 0;
+
+  for (let i = 0; i < state.prefix.length; i++) {
+    const parentPrefix = state.prefix.slice(0, i);
+    const token = state.prefix[i];
+    const tokenResult = await first(model(parentPrefix, 0, 1, 0, token));
+
+    let cumBefore = 0;
+    let prob = 0;
+    if (tokenResult) {
+      cumBefore = tokenResult.start;
+      prob = tokenResult.end - tokenResult.start;
+    }
+
+    top = top + cumBefore * size;
+    size = size * prob;
+  }
+
+  return {
+    x: 1 - size + state.x * size,
+    y: top + state.y * size,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
