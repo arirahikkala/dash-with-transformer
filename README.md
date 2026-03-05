@@ -64,6 +64,7 @@ Configured in `engine.py` and read at import time:
 | `BEAM_K` | `5` | Beam width for `ByteBeamState` inference |
 | `PRUNE_THRESHOLD` | `0.05` | Beam pruning threshold — beams with probability below this fraction of the best beam are dropped |
 | `CACHE_MAX_SIZE` | `10000` | Maximum number of entries in the LRU state cache |
+| `INITIAL_CONTEXT` | (none) | Comma-separated token IDs fed as initial context before inference. |
 
 ## Tests
 
@@ -71,3 +72,7 @@ Configured in `engine.py` and read at import time:
 cd frontend
 npm test
 ```
+
+## Compatibility notes
+
+Qwen models don't set a BOS token ID, and our custom version of genlm-bytes currently sets an empty initial context if there's no BOS token, so you need to provide an INITIAL_CONTEXT. A working substitute is a single EOS token, so, for Qwen 2.5 and 3, `INITIAL_CONTEXT=151643`. For Qwen 3.5, you might try `INITIAL_CONTEXT=248044`, but I haven't successfully tested that yet.

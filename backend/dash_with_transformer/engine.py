@@ -13,6 +13,11 @@ BEAM_K = int(os.environ.get("BEAM_K", "5"))
 PRUNE_THRESHOLD = float(os.environ.get("PRUNE_THRESHOLD", "0.05"))
 MODEL_NAME = os.environ.get("MODEL_NAME", "gpt2-medium")
 CACHE_MAX_SIZE = int(os.environ.get("CACHE_MAX_SIZE", "10000"))
+INITIAL_CONTEXT = (
+    [int(x) for x in os.environ["INITIAL_CONTEXT"].split(",")]
+    if "INITIAL_CONTEXT" in os.environ
+    else None
+)
 
 
 class BytePredictionEngine:
@@ -22,8 +27,12 @@ class BytePredictionEngine:
 
     async def start(self):
         llm = load_model_by_name(MODEL_NAME, backend="vllm")
-        params = BeamParams(K=BEAM_K, prune_threshold=PRUNE_THRESHOLD)
-        initial = await ByteBeamState.initial(llm, params)
+        params = BeamParams(
+            K=BEAM_K,
+            prune_threshold=PRUNE_THRESHOLD
+        )
+        initial = await ByteBeamState.initial(llm, params,
+            **({"initial_context": INITIAL_CONTEXT} if INITIAL_CONTEXT is not None else {}))
         # Store the initial state in WITHOUT_EOS mode for prefix caching.
         # prefill() internally operates in WITHOUT_EOS, so all cached states
         # use this mode. We switch to WITH_EOS only at query time.
