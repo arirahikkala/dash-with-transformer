@@ -12,6 +12,7 @@ from genlm.bytes.byte_lm.trie_state import TrieMode
 BEAM_K = int(os.environ.get("BEAM_K", "5"))
 PRUNE_THRESHOLD = float(os.environ.get("PRUNE_THRESHOLD", "0.05"))
 MODEL_NAME = os.environ.get("MODEL_NAME", "gpt2-medium")
+MAX_MODEL_LEN = int(os.environ["MAX_MODEL_LEN"]) if "MAX_MODEL_LEN" in os.environ else None
 CACHE_MAX_SIZE = int(os.environ.get("CACHE_MAX_SIZE", "10000"))
 INITIAL_CONTEXT = (
     [int(x) for x in os.environ["INITIAL_CONTEXT"].split(",")]
@@ -26,7 +27,11 @@ class BytePredictionEngine:
         self._lock = asyncio.Lock()
 
     async def start(self):
-        llm = load_model_by_name(MODEL_NAME, backend="vllm")
+        engine_opts = {}
+        if MAX_MODEL_LEN is not None:
+            engine_opts["max_model_len"] = MAX_MODEL_LEN
+        llm = load_model_by_name(MODEL_NAME, backend="vllm",
+            llm_opts={"engine_opts": engine_opts})
         params = BeamParams(
             K=BEAM_K,
             prune_threshold=PRUNE_THRESHOLD

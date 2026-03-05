@@ -65,6 +65,7 @@ Configured in `engine.py` and read at import time:
 | `PRUNE_THRESHOLD` | `0.05` | Beam pruning threshold — beams with probability below this fraction of the best beam are dropped |
 | `CACHE_MAX_SIZE` | `10000` | Maximum number of entries in the LRU state cache |
 | `INITIAL_CONTEXT` | (none) | Comma-separated token IDs fed as initial context before inference. |
+| `MAX_MODEL_LEN` | (none) | Maximum sequence length, passed as max_model_len to vLLM. |
 
 ## Tests
 
