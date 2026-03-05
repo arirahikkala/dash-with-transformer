@@ -28,7 +28,7 @@ SPECIAL_TOKENS: list[int] = (
 
 class BytePredictionEngine:
     def __init__(self):
-        self._cache: OrderedDict[bytes, ByteBeamState] = OrderedDict()
+        self._cache: OrderedDict[tuple[int, ...], ByteBeamState] = OrderedDict()
         self._lock = asyncio.Lock()
         self._special_token_bytes: list[bytes] = []
         self._special_token_labels: list[str] = []
@@ -64,14 +64,14 @@ class BytePredictionEngine:
         # Store the initial state in WITHOUT_EOS mode for prefix caching.
         # prefill() internally operates in WITHOUT_EOS, so all cached states
         # use this mode. We switch to WITH_EOS only at query time.
-        self._cache[b""] = initial.with_mode(TrieMode.WITHOUT_EOS)
+        self._cache[()] = initial.with_mode(TrieMode.WITHOUT_EOS)
         self._llm = llm
         self._initial = initial
 
     async def shutdown(self):
         await self._initial.cleanup()
 
-    def _longest_cached_prefix(self, ctx: bytes) -> tuple[bytes, ByteBeamState]:
+    def _longest_cached_prefix(self, ctx: tuple[int, ...]) -> tuple[tuple[int, ...], ByteBeamState]:
         """Find the longest prefix of ctx that exists in the cache."""
         for i in range(len(ctx), -1, -1):
             prefix = ctx[:i]
@@ -79,10 +79,10 @@ class BytePredictionEngine:
                 # Move to end for LRU
                 self._cache.move_to_end(prefix)
                 return prefix, self._cache[prefix]
-        # Should never happen since b"" is always in cache
+        # Should never happen since () is always in cache
         raise RuntimeError("empty prefix missing from cache")
 
-    def _put_cache(self, key: bytes, state: ByteBeamState):
+    def _put_cache(self, key: tuple[int, ...], state: ByteBeamState):
         """Insert into the cache with LRU eviction."""
         if key in self._cache:
             self._cache.move_to_end(key)
@@ -90,21 +90,24 @@ class BytePredictionEngine:
         self._cache[key] = state
         while len(self._cache) > CACHE_MAX_SIZE:
             evicted_key, evicted_val = self._cache.popitem(last=False)
-            if evicted_key == b"":
+            if evicted_key == ():
                 # Never evict the empty-prefix sentinel; re-insert at front and stop.
                 self._cache[evicted_key] = evicted_val
                 self._cache.move_to_end(evicted_key, last=False)
                 break
 
-    async def _predict_one(self, ctx: bytes) -> list[float]:
-        """Get next-byte probabilities for a single byte context."""
+    async def _predict_one(self, ctx: tuple[int, ...]) -> list[float]:
+        """Get next-token probabilities for a context of byte/special-token indices."""
         async with self._lock:
             prefix, state = self._longest_cached_prefix(ctx)
 
-        # Advance byte-by-byte through the uncached suffix
+        # Advance one element at a time through the uncached suffix
         suffix = ctx[len(prefix):]
-        for i, byte_val in enumerate(suffix):
-            state = await (state.prune() << byte_val)
+        for i, val in enumerate(suffix):
+            # In our indexing, 0-255 are bytes, 256+ are special tokens.
+            # genlm-bytes uses 256-257 internally, so special tokens start at 258.
+            genlm_val = val if val < 256 else val + 2
+            state = await (state.prune() << genlm_val)
             new_prefix = ctx[: len(prefix) + i + 1]
             async with self._lock:
                 self._put_cache(new_prefix, state)
@@ -119,12 +122,12 @@ class BytePredictionEngine:
 
     async def _predict_trie(
         self,
-        prefix: bytes,
+        prefix: tuple[int, ...],
         prob_so_far: float,
         min_prob: float,
         depth: int = 0,
     ) -> dict:
-        """Recursively build a trie of next-byte distributions.
+        """Recursively build a trie of next-token distributions.
 
         Only expands children whose probability >= min_prob.
         Stops recursing beyond *depth* 5.
@@ -132,8 +135,8 @@ class BytePredictionEngine:
         dist = await self._predict_one(prefix)
         children: dict[int, dict] = {}
         eligible = [
-            b for b in range(256)
-            if dist[b] != 0 and prob_so_far * dist[b] >= min_prob
+            i for i in range(len(dist))
+            if dist[i] != 0 and prob_so_far * dist[i] >= min_prob
         ]
         # also break up the recursion if at any point it branches too eagerly
         if depth >= 5 or len(eligible) >= 3:
@@ -141,18 +144,18 @@ class BytePredictionEngine:
         if eligible:
             subtries = await asyncio.gather(*(
                 self._predict_trie(
-                    prefix + bytes([b]),
-                    prob_so_far * dist[b],
+                    prefix + (tok,),
+                    prob_so_far * dist[tok],
                     min_prob,
                     depth + 1,
                 )
-                for b in eligible
+                for tok in eligible
             ))
             children = dict(zip(eligible, subtries))
         return {"dist": dist, "children": children}
 
     async def predict_batch(
-        self, inputs: list[tuple[bytes, float]]
+        self, inputs: list[tuple[tuple[int, ...], float]]
     ) -> list[dict]:
         """Predict next-byte distribution tries for a batch of inputs.
 

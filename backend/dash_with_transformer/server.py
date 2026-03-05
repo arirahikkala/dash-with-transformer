@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import gzip
 import logging
 import time
@@ -21,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class PredictInput(BaseModel):
-    prefix: str  # base64-encoded byte buffer
+    prefix: list[int]  # sequence of byte (0-255) and special token (256+) indices
     min_prob: float = 0.0
 
 
@@ -74,7 +73,7 @@ async def special_tokens():
 @app.post("/predict")
 async def predict(req: PredictRequest):
     raw_inputs = [
-        (base64.b64decode(inp.prefix), inp.min_prob)
+        (tuple(inp.prefix), inp.min_prob)
         for inp in req.inputs
     ]
     t0 = time.perf_counter()
