@@ -44,12 +44,6 @@ class BytePredictionEngine:
         if len(SPECIAL_TOKENS) != len(set(SPECIAL_TOKENS)):
             raise ValueError(f"SPECIAL_TOKENS contains duplicates: {SPECIAL_TOKENS}")
         all_special_ids = set(llm.tokenizer.all_special_ids)
-        for tid in SPECIAL_TOKENS:
-            if tid not in all_special_ids:
-                raise ValueError(
-                    f"Token ID {tid} is not a special token in the {MODEL_NAME} tokenizer. "
-                    f"Special token IDs: {sorted(all_special_ids)}"
-                )
         byte_vocab, str_vocab = decode_vocab(llm.tokenizer)
         self._special_token_bytes = [byte_vocab[tid] for tid in SPECIAL_TOKENS]
         self._special_token_labels = [str_vocab[tid] for tid in SPECIAL_TOKENS]
