@@ -5,6 +5,16 @@ import { normalizeCursor } from "./cursor";
 import { first } from "./types";
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Assert non-null (normalizeCursor only returns null on abort). */
+function nn<T>(v: T | null): T {
+  expect(v).not.toBeNull();
+  return v!;
+}
+
+// ---------------------------------------------------------------------------
 // Test language models
 // ---------------------------------------------------------------------------
 
@@ -93,25 +103,27 @@ describe("normalizeCursor", () => {
 
   describe("(0, 0) identity", () => {
     it("empty prefix stays empty", async () => {
-      const r = await normalizeCursor(binary, { prefix: [], x: 0, y: 0 });
+      const r = nn(await normalizeCursor(binary, { prefix: [], x: 0, y: 0 }));
       expect(r.prefix).toEqual([]);
       expect(r.x).toBe(0);
       expect(r.y).toBe(0);
     });
 
     it("non-empty prefix is preserved", async () => {
-      const r = await normalizeCursor(binary, { prefix: [A], x: 0, y: 0 });
+      const r = nn(await normalizeCursor(binary, { prefix: [A], x: 0, y: 0 }));
       expect(r.prefix).toEqual([A]);
       expect(r.x).toBe(0);
       expect(r.y).toBe(0);
     });
 
     it("deep prefix is preserved", async () => {
-      const r = await normalizeCursor(binary, {
-        prefix: [A, B, A],
-        x: 0,
-        y: 0,
-      });
+      const r = nn(
+        await normalizeCursor(binary, {
+          prefix: [A, B, A],
+          x: 0,
+          y: 0,
+        }),
+      );
       expect(r.prefix).toEqual([A, B, A]);
       expect(r.x).toBe(0);
       expect(r.y).toBe(0);
@@ -124,7 +136,9 @@ describe("normalizeCursor", () => {
     it("descends one level into the first child (binary)", async () => {
       // Binary: A occupies x∈[0.5,1], y∈[0,0.5)
       // Cursor at (0.7, 0.3): inside A.
-      const r = await normalizeCursor(binary, { prefix: [], x: 0.7, y: 0.3 });
+      const r = nn(
+        await normalizeCursor(binary, { prefix: [], x: 0.7, y: 0.3 }),
+      );
       expect(r.prefix).toEqual([A]);
       expect(r.x).toBeCloseTo(0.4); // (0.7−0.5)/0.5
       expect(r.y).toBeCloseTo(0.6); // 0.3/0.5
@@ -132,7 +146,9 @@ describe("normalizeCursor", () => {
 
     it("descends one level into the second child (binary)", async () => {
       // B occupies x∈[0.5,1], y∈[0.5,1)
-      const r = await normalizeCursor(binary, { prefix: [], x: 0.6, y: 0.7 });
+      const r = nn(
+        await normalizeCursor(binary, { prefix: [], x: 0.6, y: 0.7 }),
+      );
       expect(r.prefix).toEqual([B]);
       expect(r.x).toBeCloseTo(0.2); // (0.6−0.5)/0.5
       expect(r.y).toBeCloseTo(0.4); // (0.7−0.5)/0.5
@@ -141,7 +157,9 @@ describe("normalizeCursor", () => {
     it("descends multiple levels", async () => {
       // x=0.9, y=0.1.  Each step enters A (p=0.5).
       //   → (0.8, 0.2) → (0.6, 0.4) → (0.2, 0.8)  x<0.5 → stop
-      const r = await normalizeCursor(binary, { prefix: [], x: 0.9, y: 0.1 });
+      const r = nn(
+        await normalizeCursor(binary, { prefix: [], x: 0.9, y: 0.1 }),
+      );
       expect(r.prefix).toEqual([A, A, A]);
       expect(r.x).toBeCloseTo(0.2);
       expect(r.y).toBeCloseTo(0.8);
@@ -150,7 +168,9 @@ describe("normalizeCursor", () => {
     it("descends into the correct child of a ternary model", async () => {
       // Ternary: X=0.2 y∈[0,0.2), Y=0.5 y∈[0.2,0.7), Z=0.3 y∈[0.7,1)
       // Cursor at (0.6, 0.4) — should land in Y (x≥0.5, y∈[0.2,0.7)).
-      const r = await normalizeCursor(ternary, { prefix: [], x: 0.6, y: 0.4 });
+      const r = nn(
+        await normalizeCursor(ternary, { prefix: [], x: 0.6, y: 0.4 }),
+      );
       expect(r.prefix).toEqual([Y]);
       expect(r.x).toBeCloseTo((0.6 - 0.5) / 0.5); // 0.2
       expect(r.y).toBeCloseTo((0.4 - 0.2) / 0.5); // 0.4
@@ -163,11 +183,13 @@ describe("normalizeCursor", () => {
       // After A: A=0.3 y∈[0,0.3), B=0.7 y∈[0.3,1).
       //   x=0.5≥0.3, y=1/3≥0.3 → enter B.
       //   new: x=(0.5−0.3)/0.7=2/7, y=(1/3−0.3)/0.7=1/21
-      const r = await normalizeCursor(contextual, {
-        prefix: [],
-        x: 0.7,
-        y: 0.2,
-      });
+      const r = nn(
+        await normalizeCursor(contextual, {
+          prefix: [],
+          x: 0.7,
+          y: 0.2,
+        }),
+      );
       expect(r.prefix).toEqual([A, B]);
       expect(r.x).toBeCloseTo(2 / 7);
       expect(r.y).toBeCloseTo(1 / 21);
@@ -179,7 +201,7 @@ describe("normalizeCursor", () => {
       // enter A again →         x=(0.375−0.2)/0.8=0.21875, y=0.625/0.8=0.78125
       // enter A again →         x=(0.21875−0.2)/0.8≈0.0234, y=0.78125/0.8≈0.977
       // x<0.2 → stop.
-      const r = await normalizeCursor(asym, { prefix: [], x: 0.5, y: 0.5 });
+      const r = nn(await normalizeCursor(asym, { prefix: [], x: 0.5, y: 0.5 }));
       expect(r.prefix).toEqual([A, A, A]);
       expect(r.x).toBeCloseTo(0.0234375);
       expect(r.y).toBeCloseTo(0.9765625);
@@ -191,18 +213,22 @@ describe("normalizeCursor", () => {
   describe("gap", () => {
     it("stays at root when x is in the gap", async () => {
       // Binary: children start at x=0.5.  Cursor at x=0.3 — gap.
-      const r = await normalizeCursor(binary, { prefix: [], x: 0.3, y: 0.3 });
+      const r = nn(
+        await normalizeCursor(binary, { prefix: [], x: 0.3, y: 0.3 }),
+      );
       expect(r.prefix).toEqual([]);
       expect(r.x).toBe(0.3);
       expect(r.y).toBe(0.3);
     });
 
     it("stays in a non-root square when in its gap", async () => {
-      const r = await normalizeCursor(binary, {
-        prefix: [A],
-        x: 0.3,
-        y: 0.3,
-      });
+      const r = nn(
+        await normalizeCursor(binary, {
+          prefix: [A],
+          x: 0.3,
+          y: 0.3,
+        }),
+      );
       expect(r.prefix).toEqual([A]);
       expect(r.x).toBe(0.3);
       expect(r.y).toBe(0.3);
@@ -217,11 +243,13 @@ describe("normalizeCursor", () => {
       // Ascend: x=0.5+0.3·0.5=0.65, y=0+1.1·0.5=0.55
       // B: x≥0.5, y∈[0.5,1) → enter B.
       //   x=(0.65−0.5)/0.5=0.3, y=(0.55−0.5)/0.5=0.1
-      const r = await normalizeCursor(binary, {
-        prefix: [A],
-        x: 0.3,
-        y: 1.1,
-      });
+      const r = nn(
+        await normalizeCursor(binary, {
+          prefix: [A],
+          x: 0.3,
+          y: 1.1,
+        }),
+      );
       expect(r.prefix).toEqual([B]);
       expect(r.x).toBeCloseTo(0.3);
       expect(r.y).toBeCloseTo(0.1);
@@ -232,11 +260,13 @@ describe("normalizeCursor", () => {
       // Ascend: x=0.5+0.3·0.5=0.65, y=0.5+(−0.1)·0.5=0.45
       // A: x≥0.5, y∈[0,0.5) → enter A.
       //   x=(0.65−0.5)/0.5=0.3, y=0.45/0.5=0.9
-      const r = await normalizeCursor(binary, {
-        prefix: [B],
-        x: 0.3,
-        y: -0.1,
-      });
+      const r = nn(
+        await normalizeCursor(binary, {
+          prefix: [B],
+          x: 0.3,
+          y: -0.1,
+        }),
+      );
       expect(r.prefix).toEqual([A]);
       expect(r.x).toBeCloseTo(0.3);
       expect(r.y).toBeCloseTo(0.9);
@@ -246,11 +276,13 @@ describe("normalizeCursor", () => {
       // prefix=[A], x=−0.1 → leave A.
       // Ascend: x=0.5+(−0.1)·0.5=0.45, y=0+0.3·0.5=0.15
       // x=0.45 < 0.5 — in the root's gap.
-      const r = await normalizeCursor(binary, {
-        prefix: [A],
-        x: -0.1,
-        y: 0.3,
-      });
+      const r = nn(
+        await normalizeCursor(binary, {
+          prefix: [A],
+          x: -0.1,
+          y: 0.3,
+        }),
+      );
       expect(r.prefix).toEqual([]);
       expect(r.x).toBeCloseTo(0.45);
       expect(r.y).toBeCloseTo(0.15);
@@ -269,11 +301,13 @@ describe("normalizeCursor", () => {
       // In A: x=0.65 ≥ 0.5, y=0 ∈ [0, 0.5) → A.
       //   x=(0.65−0.5)/0.5=0.3, y=0
       // In AA: x=0.3 < 0.5 → stop.
-      const r = await normalizeCursor(binary, {
-        prefix: [A, A],
-        x: 0.3,
-        y: -0.2,
-      });
+      const r = nn(
+        await normalizeCursor(binary, {
+          prefix: [A, A],
+          x: 0.3,
+          y: -0.2,
+        }),
+      );
       expect(r.prefix).toEqual([A, A]);
       expect(r.x).toBeCloseTo(0.3);
       expect(r.y).toBeCloseTo(0);
@@ -337,7 +371,7 @@ describe("normalizeCursor", () => {
 
     for (const { name, model, state } of cases) {
       it(`preserves position: ${name}`, async () => {
-        const result = await normalizeCursor(model, state);
+        const result = nn(await normalizeCursor(model, state));
         await expectSameGlobal(model, state, result);
       });
     }
@@ -347,7 +381,9 @@ describe("normalizeCursor", () => {
 
   describe("edge cases", () => {
     it("empty distribution — no descent possible", async () => {
-      const r = await normalizeCursor(empty, { prefix: [], x: 0.5, y: 0.5 });
+      const r = nn(
+        await normalizeCursor(empty, { prefix: [], x: 0.5, y: 0.5 }),
+      );
       expect(r.prefix).toEqual([]);
       expect(r.x).toBe(0.5);
       expect(r.y).toBe(0.5);
@@ -365,7 +401,7 @@ describe("normalizeCursor", () => {
     });
 
     it("clamps at root on extreme out-of-bounds", async () => {
-      const r = await normalizeCursor(binary, { prefix: [], x: -5, y: 3 });
+      const r = nn(await normalizeCursor(binary, { prefix: [], x: -5, y: 3 }));
       // Clamped to (0, 1−ε), then descend.
       expect(r.x).toBeGreaterThanOrEqual(0);
       expect(r.x).toBeLessThan(1);
@@ -375,7 +411,9 @@ describe("normalizeCursor", () => {
 
     it("handles cursor exactly on the y boundary between tokens", async () => {
       // y = 0.5 exactly: top boundary of B (inclusive), not A.
-      const r = await normalizeCursor(binary, { prefix: [], x: 0.7, y: 0.5 });
+      const r = nn(
+        await normalizeCursor(binary, { prefix: [], x: 0.7, y: 0.5 }),
+      );
       expect(r.prefix).toEqual([B]);
     });
   });
@@ -387,7 +425,9 @@ describe("normalizeCursor", () => {
       const numModel = adaptModel<readonly number[]>(async () => [0.4, 0.6]);
       // Token 0: x∈[0.6,1] y∈[0,0.4).  Token 1: x∈[0.4,1] y∈[0.4,1).
       // (0.5, 0.5): token 0 x≥0.6? no.  token 1 x≥0.4 and y∈[0.4,1)? yes.
-      const r = await normalizeCursor(numModel, { prefix: [], x: 0.5, y: 0.5 });
+      const r = nn(
+        await normalizeCursor(numModel, { prefix: [], x: 0.5, y: 0.5 }),
+      );
       expect(r.prefix).toEqual([1]);
       expect(r.x).toBeCloseTo(1 / 6);
       expect(r.y).toBeCloseTo(1 / 6);
@@ -424,11 +464,13 @@ describe("normalizeCursor", () => {
       };
 
       // prefix=[tok1], y=1.1 → ascend, enter tok2.
-      const r = await normalizeCursor(objModel, {
-        prefix: [tok1],
-        x: 0.3,
-        y: 1.1,
-      });
+      const r = nn(
+        await normalizeCursor(objModel, {
+          prefix: [tok1],
+          x: 0.3,
+          y: 1.1,
+        }),
+      );
       expect(r.prefix).toHaveLength(1);
       expect(r.prefix[0]).toBe(tok2);
       expect(r.x).toBeCloseTo(0.3);
