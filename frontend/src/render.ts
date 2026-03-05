@@ -121,7 +121,7 @@ export async function renderScene(
   nodeCtx.fillStyle = "#e8e8e8";
   nodeCtx.fillRect(0, 0, nodeWidth, height);
 
-  // Clear label canvas to transparent
+  // Label canvas is transparent and on top so that both canvases can be rendered async
   labelCtx.clearRect(0, 0, labelCtx.canvas.width, height);
 
   await renderNodes(
