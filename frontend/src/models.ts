@@ -138,7 +138,7 @@ async function* expandMultiByte(
   if (partialBytes.length === totalBytes) {
     const start = cumStart;
     const end = cumStart + probSoFar;
-    if (end < rangeStart || start > rangeEnd) return;
+    if (end <= rangeStart || start > rangeEnd) return;
     if (end - start < minProb) return;
     const codepoint = decodeUtf8Bytes(partialBytes);
     yield { token: { type: "codepoint", codepoint }, start, end };
@@ -160,7 +160,7 @@ async function* expandMultiByte(
     const subCumStart = cum;
     cum += subProb;
 
-    if (cum < rangeStart || subCumStart > rangeEnd) continue;
+    if (cum <= rangeStart || subCumStart > rangeEnd) continue;
     if (cum - subCumStart < minProb) continue;
 
     subtrees.push(
@@ -313,7 +313,7 @@ export function fromByteLevelModel(
       if (firstByteDist[b] === 0) continue;
       const start = firstByteCumStart[b];
       const end = firstByteCumStart[b] + firstByteDist[b];
-      if (end < rangeStart || start > rangeEnd) continue;
+      if (end <= rangeStart || start > rangeEnd) continue;
       if (end - start < minProb) continue;
       const token: UnicodeCodepoint = { type: "codepoint", codepoint: b };
       yield { token, start, end };
@@ -330,7 +330,7 @@ export function fromByteLevelModel(
       const groupEnd = firstByteCumStart[b] + firstByteDist[b];
 
       // Skip groups entirely outside the visible range.
-      if (groupEnd < rangeStart || firstByteCumStart[b] > rangeEnd) continue;
+      if (groupEnd <= rangeStart || firstByteCumStart[b] > rangeEnd) continue;
       // Skip groups where every codepoint is below minProb.
       if (firstByteDist[b] < minProb) continue;
 
@@ -355,7 +355,7 @@ export function fromByteLevelModel(
       if (firstByteDist[st.index] === 0) continue;
       const start = firstByteCumStart[st.index];
       const end = start + firstByteDist[st.index];
-      if (end < rangeStart || start > rangeEnd) continue;
+      if (end <= rangeStart || start > rangeEnd) continue;
       if (end - start < minProb) continue;
       expansions.push(
         (async function* () {

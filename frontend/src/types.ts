@@ -23,8 +23,8 @@ export type WidgetToken = UnicodeCodepoint | SpecialToken;
 
 /**
  * One entry in a next-token probability distribution, placed on the
- * cumulative-probability line.  `start` and `end` are the entry's
- * extent on [0, 1]; the token's probability is `end − start`.
+ * cumulative-probability line.  The token occupies the half-open interval
+ * [start, end); its probability is `end − start`.
  *
  * A node's extents depend only on the prefix — the query parameters
  * (rangeStart, rangeEnd, minProb) only govern whether it is listed.
@@ -60,8 +60,9 @@ export type LanguageModel<P> = (prefix: P) => Promise<readonly number[]>;
  * Tokens may be yielded in any order.
  *
  * @param prefix        - The token prefix.
- * @param rangeStart    - Only return entries overlapping [rangeStart, rangeEnd].
- * @param rangeEnd      - Upper bound of the visible range.
+ * @param rangeStart    - Only return entries whose half-open extent [start, end)
+ *                        overlaps the point or range [rangeStart, rangeEnd].
+ * @param rangeEnd      - Inclusive upper bound of the query range.
  * @param minProb       - Only return entries with (end − start) ≥ minProb.
  * @param specificToken - If set, return only this token's extent (ignoring
  *                        range/size filters) with minimal computation.

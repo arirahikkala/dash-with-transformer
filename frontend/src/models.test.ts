@@ -248,7 +248,7 @@ describe("range filtering", () => {
 // Closed-range semantics
 // ---------------------------------------------------------------------------
 
-describe("closed-range semantics", () => {
+describe("half-open extent semantics", () => {
   // a=[0, 0.5], è=[0.5, 0.75], é=[0.75, 1.0]
   const table: Record<string, number[]> = {
     "": makeDist({ 97: 0.5, 0xc3: 0.5 }),
@@ -257,40 +257,40 @@ describe("closed-range semantics", () => {
 
   it("point query returns the containing node", async () => {
     const lm = fromByteLevelModel(makeMockModel(table), []);
-    // 0.6 is inside è=[0.5, 0.75]
+    // 0.6 is inside è=[0.5, 0.75)
     const result = await collect(lm([], 0.6, 0.6, 0));
 
     expect(result).toHaveLength(1);
     expect(result[0].token).toEqual(cp(0xe8));
   });
 
-  it("point query at a boundary returns both adjacent nodes", async () => {
+  it("point query at a boundary returns only the token starting there", async () => {
     const lm = fromByteLevelModel(makeMockModel(table), []);
-    // 0.5 is exactly at the boundary between a=[0, 0.5] and è=[0.5, 0.75]
+    // 0.5 is at the boundary: a=[0, 0.5) ends here, è=[0.5, 0.75) starts here.
+    // With half-open extents, only è contains 0.5.
     const result = await collect(lm([], 0.5, 0.5, 0));
 
-    expect(result).toHaveLength(2);
-    expect(result[0].token).toEqual(cp(97)); // a (end touches)
-    expect(result[1].token).toEqual(cp(0xe8)); // è (start touches)
+    expect(result).toHaveLength(1);
+    expect(result[0].token).toEqual(cp(0xe8)); // è (start = 0.5)
   });
 
-  it("point query at a multi-byte boundary returns both adjacent nodes", async () => {
+  it("point query at a multi-byte boundary returns only the token starting there", async () => {
     const lm = fromByteLevelModel(makeMockModel(table), []);
-    // 0.75 is exactly at the boundary between è=[0.5, 0.75] and é=[0.75, 1.0]
+    // 0.75 is at the boundary: è=[0.5, 0.75) ends here, é=[0.75, 1.0) starts here.
     const result = await collect(lm([], 0.75, 0.75, 0));
 
-    expect(result).toHaveLength(2);
-    expect(result[0].token).toEqual(cp(0xe8)); // è (end touches)
-    expect(result[1].token).toEqual(cp(0xe9)); // é (start touches)
+    expect(result).toHaveLength(1);
+    expect(result[0].token).toEqual(cp(0xe9)); // é (start = 0.75)
   });
 
-  it("closed range includes nodes touching the boundary", async () => {
+  it("range query excludes tokens whose extent ends at rangeStart", async () => {
     const lm = fromByteLevelModel(makeMockModel(table), []);
-    // [0.5, 0.75] touches a at its end AND é at its start
+    // a=[0, 0.5) ends at 0.5, è=[0.5, 0.75), é=[0.75, 1.0)
+    // Range [0.5, 0.75]: è and é overlap, but a does not (end = rangeStart).
     const result = await collect(lm([], 0.5, 0.75, 0));
 
-    expect(result).toHaveLength(3);
-    expect(result.map((e) => e.token)).toEqual([cp(97), cp(0xe8), cp(0xe9)]);
+    expect(result).toHaveLength(2);
+    expect(result.map((e) => e.token)).toEqual([cp(0xe8), cp(0xe9)]);
   });
 
   it("point query at 0 returns the first node", async () => {
@@ -301,22 +301,22 @@ describe("closed-range semantics", () => {
     expect(result[0].token).toEqual(cp(97));
   });
 
-  it("point query at 1 returns the last node", async () => {
+  it("point query at 1 returns nothing (past all half-open extents)", async () => {
     const lm = fromByteLevelModel(makeMockModel(table), []);
+    // All extents are half-open: the last token é=[0.75, 1.0) does not contain 1.0.
     const result = await collect(lm([], 1, 1, 0));
 
-    expect(result).toHaveLength(1);
-    expect(result[0].token).toEqual(cp(0xe9));
+    expect(result).toHaveLength(0);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Closed-range semantics with multi-byte sub-groups
+// Half-open range semantics with multi-byte sub-groups
 // ---------------------------------------------------------------------------
 
-describe("closed-range with deep multi-byte", () => {
+describe("half-open range with deep multi-byte", () => {
   // 3-byte: E4 → two second bytes, each with one third byte
-  // 中 = E4 B8 AD at [0, 0.5],  乀 = E4 B9 80 at [0.5, 1.0]
+  // 中 = E4 B8 AD at [0, 0.5),  乀 = E4 B9 80 at [0.5, 1.0)
   const table: Record<string, number[]> = {
     "": makeDist({ 0xe4: 1.0 }),
     e4: makeDist({ 0xb8: 0.5, 0xb9: 0.5 }),
@@ -324,14 +324,13 @@ describe("closed-range with deep multi-byte", () => {
     e4b9: makeDist({ 0x80: 1.0 }),
   };
 
-  it("point query at sub-group boundary returns both codepoints", async () => {
+  it("point query at sub-group boundary returns only the token starting there", async () => {
     const lm = fromByteLevelModel(makeMockModel(table), []);
-    // 0.5 is the boundary between 中=[0, 0.5] and 乀=[0.5, 1.0]
+    // 0.5 is the boundary: 中=[0, 0.5) ends here, 乀=[0.5, 1.0) starts here.
     const result = await collect(lm([], 0.5, 0.5, 0));
 
-    expect(result).toHaveLength(2);
-    expect(result[0].token).toEqual(cp(0x4e2d)); // 中
-    expect(result[1].token).toEqual(cp(0x4e40)); // 乀
+    expect(result).toHaveLength(1);
+    expect(result[0].token).toEqual(cp(0x4e40)); // 乀
   });
 
   it("point query inside a sub-group returns just that codepoint", async () => {

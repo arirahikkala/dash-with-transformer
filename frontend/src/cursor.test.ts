@@ -383,7 +383,7 @@ describe("normalizeCursor", () => {
             continue;
           }
           const p = entry.end - entry.start;
-          if (entry.end < rangeStart || entry.start > rangeEnd) continue;
+          if (entry.end <= rangeStart || entry.start > rangeEnd) continue;
           if (p < minProb) continue;
           yield entry;
         }
