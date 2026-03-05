@@ -319,17 +319,15 @@ describe("normalizeCursor", () => {
       expect(r.y).toBe(0.5);
     });
 
-    it("deterministic model stops at maxDepth", async () => {
+    it("deterministic model is abortable", async () => {
+      const controller = new AbortController();
+      controller.abort();
       const r = await normalizeCursor(
         deterministic,
         { prefix: [], x: 0.5, y: 0.5 },
-        { maxDepth: 5 },
+        controller.signal,
       );
-      expect(r.prefix).toHaveLength(5);
-      expect(r.prefix).toEqual([A, A, A, A, A]);
-      // x and y are unchanged because p=1: (x−0)/1 = x each step.
-      expect(r.x).toBeCloseTo(0.5);
-      expect(r.y).toBeCloseTo(0.5);
+      expect(r).toBeNull();
     });
 
     it("clamps at root on extreme out-of-bounds", async () => {

@@ -200,19 +200,25 @@ async function main() {
     );
   }
 
-  // --- Monotonic normalizeCursor ---
-  let normalizeVersion = 0;
+  // --- Abortable normalizeCursor ---
+  let normalizeController: AbortController | null = null;
 
   async function updateAndRender(dx: number, dy: number) {
-    const version = ++normalizeVersion;
+    normalizeController?.abort();
+    normalizeController = new AbortController();
+    const signal = normalizeController.signal;
 
-    const newCursor = await normalizeCursor(model, {
-      prefix: cursor.prefix,
-      x: cursor.x + dx,
-      y: cursor.y + dy,
-    });
+    const newCursor = await normalizeCursor(
+      model,
+      {
+        prefix: cursor.prefix,
+        x: cursor.x + dx,
+        y: cursor.y + dy,
+      },
+      signal,
+    );
 
-    if (version !== normalizeVersion) return;
+    if (!newCursor) return;
     cursor = newCursor;
     const text = prefixToString(cursor.prefix);
     if (prefixEl.textContent !== text) {

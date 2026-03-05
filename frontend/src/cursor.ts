@@ -6,11 +6,6 @@
 import type { CDFView, Cursor } from "./types";
 import { first } from "./types";
 
-export interface NormalizeOptions {
-  /** Stop descending when prefix reaches this length.  Default 100. */
-  maxDepth?: number;
-}
-
 // ---------------------------------------------------------------------------
 // Normalisation
 // ---------------------------------------------------------------------------
@@ -23,29 +18,28 @@ export interface NormalizeOptions {
  *
  * Special property: if the input adjustment is (0, 0), the prefix is never
  * changed (unless some token has probability exactly 1).
+ *
+ * Returns `null` if aborted via the signal.
  */
 export async function normalizeCursor<T>(
   model: CDFView<readonly T[], T>,
   state: Cursor<T>,
-  options?: NormalizeOptions,
-): Promise<Cursor<T>> {
-  const maxDepth = options?.maxDepth ?? 100000;
-
+  signal?: AbortSignal,
+): Promise<Cursor<T> | null> {
   const prefix: T[] = [...state.prefix];
   let x = state.x;
   let y = state.y;
 
-  // Upper bound on iterations: we can ascend at most prefix.length times
-  // and descend at most maxDepth times, plus a small constant.
-  const limit = state.prefix.length + maxDepth + 2;
+  for (;;) {
+    if (signal?.aborted) return null;
 
-  for (let iter = 0; iter < limit; iter++) {
     const oob = x < 0 || x >= 1 || y < 0 || y >= 1;
 
     // --- Phase 1: ascend if out of the current square ---
     if (oob && prefix.length > 0) {
       const lastToken = prefix.pop()!;
       const tokenResult = await first(model(prefix, 0, 1, 0, lastToken));
+      if (signal?.aborted) return null;
 
       let cumBefore = 0;
       let prob = 0;
@@ -71,14 +65,13 @@ export async function normalizeCursor<T>(
     }
 
     // --- Phase 2: try to descend into the smallest containing child ---
-    if (prefix.length >= maxDepth) break;
-
     let descended = false;
 
     // Since children are squares (width = height = probability p), a child
     // can only contain the cursor if p >= 1 − x (its left edge 1−p <= x).
     // Pass this as minProb to avoid materialising small tokens.
     for await (const entry of model(prefix, y, y, Math.max(0, 1 - x))) {
+      if (signal?.aborted) return null;
       const p = entry.end - entry.start;
       if (p <= 0) continue;
 
