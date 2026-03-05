@@ -65,30 +65,14 @@ export async function normalizeCursor<T>(
     }
 
     // --- Phase 2: try to descend into the smallest containing child ---
-    let descended = false;
+    const entry = await first(model(prefix, y, y, 1 - x));
+    if (signal?.aborted) return null;
+    if (!entry) break;
 
-    // Since children are squares (width = height = probability p), a child
-    // can only contain the cursor if p >= 1 − x (its left edge 1−p <= x).
-    // Pass this as minProb to avoid materialising small tokens.
-    for await (const entry of model(prefix, y, y, Math.max(0, 1 - x))) {
-      if (signal?.aborted) return null;
-      const p = entry.end - entry.start;
-      if (p <= 0) continue;
-
-      //  Child occupies x ∈ [1−p, 1],  y ∈ [start, end]
-      //  in the parent's normalised frame.
-      const childXLeft = 1 - p;
-      const cumProb = entry.start;
-      if (x >= childXLeft && y >= cumProb && y < entry.end) {
-        prefix.push(entry.token);
-        x = (x - childXLeft) / p;
-        y = (y - cumProb) / p;
-        descended = true;
-        break;
-      }
-    }
-
-    if (!descended) break;
+    const p = entry.end - entry.start;
+    prefix.push(entry.token);
+    x = (x - (1 - p)) / p;
+    y = (y - entry.start) / p;
   }
 
   return { prefix, x, y };

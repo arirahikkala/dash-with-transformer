@@ -104,7 +104,7 @@ export function adaptModel<P>(inner: LanguageModel<P>): CDFView<P, number> {
         }
         continue;
       }
-      if (end < rangeStart || start > rangeEnd) continue;
+      if (end <= rangeStart || start > rangeEnd) continue;
       if (probability < minProb) continue;
       yield { token, start, end };
     }

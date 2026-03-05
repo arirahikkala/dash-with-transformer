@@ -365,9 +365,9 @@ describe("normalizeCursor", () => {
       const tok2: Tok = { id: 2 };
       const objModel: CDFView<readonly Tok[], Tok> = async function* (
         _prefix,
-        _rangeStart,
-        _rangeEnd,
-        _minProb,
+        rangeStart,
+        rangeEnd,
+        minProb,
         specificToken?,
       ) {
         const entries: TokenCDFExtent<Tok>[] = [
@@ -382,6 +382,9 @@ describe("normalizeCursor", () => {
             }
             continue;
           }
+          const p = entry.end - entry.start;
+          if (entry.end < rangeStart || entry.start > rangeEnd) continue;
+          if (p < minProb) continue;
           yield entry;
         }
       };
