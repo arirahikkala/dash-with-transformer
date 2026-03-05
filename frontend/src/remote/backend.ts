@@ -6,6 +6,32 @@
 
 import { showErrorToast } from "../toast";
 import { createTrieCache, type TrieCache } from "../trie-cache";
+import type { SpecialToken } from "../types";
+
+// ---------------------------------------------------------------------------
+// Special tokens
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch the list of special tokens from the backend.
+ * Returns SpecialToken[] with indices starting at 256.
+ */
+export async function fetchSpecialTokens(
+  backendUrl: string,
+): Promise<SpecialToken[]> {
+  const resp = await fetch(`${backendUrl}/special_tokens`);
+  if (!resp.ok) {
+    throw new Error(`special_tokens: ${resp.status} ${await resp.text()}`);
+  }
+  const { special_tokens } = (await resp.json()) as {
+    special_tokens: string[];
+  };
+  return special_tokens.map((label, i) => ({
+    type: "special" as const,
+    index: 256 + i,
+    label,
+  }));
+}
 
 // ---------------------------------------------------------------------------
 // Request compression

@@ -30,6 +30,10 @@ In the actual implementation, it's a triplet (prefix, x, y), where x and y are i
 
 A view into the cumulative distribution function of a language model's next-token distribution at a given prefix. Tokens are returned with their *extents* in the CDF.
 
+## Byte-level model with special tokens
+
+The byte-level model's distribution covers indices 0–255 (one per byte) and optionally special tokens at indices ≥ 256 (e.g. `<|im_start|>`, `<eos>`). The backend's `GET /special_tokens` endpoint returns the ordered list of special-token labels; the front-end maps label at position *i* to index 256 + *i*, creating `SpecialToken` objects (`types.ts`). Throughout the codebase, `number` / `number[]` token values ≤ 255 are bytes and values > 255 are special-token indices.
+
 ## Backend
 
 A Python FastAPI server (`backend/`) that adapts a tokenized language model into a byte-level one via `genlm-bytes`.

@@ -1,5 +1,11 @@
-import type { Cursor, CDFView, WidgetToken, LanguageModel } from "./types";
-import { createBackendClient } from "./remote/backend";
+import type {
+  Cursor,
+  CDFView,
+  WidgetToken,
+  SpecialToken,
+  LanguageModel,
+} from "./types";
+import { createBackendClient, fetchSpecialTokens } from "./remote/backend";
 import {
   byteOnly,
   forceCleanUtf8,
@@ -19,6 +25,37 @@ function prefixToString(prefix: readonly WidgetToken[]): string {
       t.type === "codepoint" ? String.fromCodePoint(t.codepoint) : t.label,
     )
     .join("");
+}
+
+/**
+ * Encode a prefix string into byte values (0–255) and special-token indices
+ * (≥ 256) by splitting on special-token labels.
+ */
+function encodePrefixWithSpecialTokens(
+  text: string,
+  specialTokens: readonly SpecialToken[],
+): number[] {
+  if (specialTokens.length === 0 || text.length === 0) {
+    return [...new TextEncoder().encode(text)];
+  }
+  const escaped = specialTokens.map((st) =>
+    st.label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+  );
+  const pattern = new RegExp(`(${escaped.join("|")})`);
+  const parts = text.split(pattern);
+  const labelToIndex = new Map(specialTokens.map((st) => [st.label, st.index]));
+
+  const result: number[] = [];
+  for (const part of parts) {
+    if (part === "") continue;
+    const idx = labelToIndex.get(part);
+    if (idx !== undefined) {
+      result.push(idx);
+    } else {
+      result.push(...new TextEncoder().encode(part));
+    }
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,11 +111,33 @@ async function main() {
   // --- Remote side ---
   let currentMinProb = 0;
 
+  // Mutable array — fromByteLevelModel iterates it on each call,
+  // so in-place mutations are picked up automatically.
+  const specialTokens: SpecialToken[] = [];
+
+  const prefixLabelEl = document.getElementById(
+    "prefix-label",
+  ) as HTMLLabelElement;
+
+  function updatePrefixLabel() {
+    const base = "Prefix";
+    if (specialTokens.length === 0) {
+      prefixLabelEl.childNodes[0].textContent = base + "\n";
+    } else {
+      const labels = specialTokens.map((st) => st.label).join("  ");
+      prefixLabelEl.childNodes[0].textContent =
+        base + " (special tokens: " + labels + ")\n";
+    }
+  }
+
   function createRemoteLM(): LanguageModel<number[]> {
     const { predictBytes } = createBackendClient(backendUrl);
-    const prefixBytes = [...new TextEncoder().encode(remoteModelCallPrefix)];
     return (prefix: number[]) => {
-      return predictBytes([...prefixBytes, ...prefix], currentMinProb);
+      const prefixTokens = encodePrefixWithSpecialTokens(
+        remoteModelCallPrefix,
+        specialTokens,
+      );
+      return predictBytes([...prefixTokens, ...prefix], currentMinProb);
     };
   }
 
@@ -102,7 +161,7 @@ async function main() {
     fromByteLevelModel((prefix, minProb) => {
       currentMinProb = minProb;
       return interpolated(Array.from(prefix));
-    }, []);
+    }, specialTokens);
 
   // --- Hash ---
   function updateHash() {
@@ -116,13 +175,30 @@ async function main() {
     window.location.hash = params.toString();
   }
 
+  // --- Fetch special tokens ---
+  async function refreshSpecialTokens() {
+    try {
+      const tokens = await fetchSpecialTokens(backendUrl);
+      specialTokens.length = 0;
+      specialTokens.push(...tokens);
+    } catch {
+      specialTokens.length = 0;
+    }
+    updatePrefixLabel();
+  }
+
+  // Fire initial fetch (don't block startup)
+  refreshSpecialTokens();
+
   // --- Config change handlers ---
-  function applyConfigChange() {
+  async function applyConfigChange() {
     const newUrl = backendUrlInput.value;
     const newPrefix = modelPrefixInput.value;
     if (newUrl === backendUrl && newPrefix === remoteModelCallPrefix) return;
+    const urlChanged = newUrl !== backendUrl;
     backendUrl = newUrl;
     remoteModelCallPrefix = newPrefix;
+    if (urlChanged) await refreshSpecialTokens();
     remoteLM = createRemoteLM();
     rebuildInterpolation();
     updateHash();
