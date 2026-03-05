@@ -66,6 +66,11 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
+@app.get("/special_tokens")
+async def special_tokens():
+    return {"special_tokens": engine._special_token_labels}
+
+
 @app.post("/predict")
 async def predict(req: PredictRequest):
     raw_inputs = [

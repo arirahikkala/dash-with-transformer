@@ -5,7 +5,7 @@ import os
 from collections import OrderedDict
 
 import numpy as np
-from genlm.backend import load_model_by_name
+from genlm.backend import load_model_by_name, decode_vocab
 from genlm.bytes import BeamParams, ByteBeamState
 from genlm.bytes.byte_lm.trie_state import TrieMode
 
@@ -19,12 +19,19 @@ INITIAL_CONTEXT = (
     if "INITIAL_CONTEXT" in os.environ
     else None
 )
+SPECIAL_TOKENS: list[int] = (
+    [int(x) for x in os.environ["SPECIAL_TOKENS"].split(",")]
+    if os.environ.get("SPECIAL_TOKENS")
+    else []
+)
 
 
 class BytePredictionEngine:
     def __init__(self):
         self._cache: OrderedDict[bytes, ByteBeamState] = OrderedDict()
         self._lock = asyncio.Lock()
+        self._special_token_bytes: list[bytes] = []
+        self._special_token_labels: list[str] = []
 
     async def start(self):
         engine_opts = {}
@@ -32,9 +39,25 @@ class BytePredictionEngine:
             engine_opts["max_model_len"] = MAX_MODEL_LEN
         llm = load_model_by_name(MODEL_NAME, backend="vllm",
             llm_opts={"engine_opts": engine_opts})
+
+        # Validate and resolve special tokens
+        if len(SPECIAL_TOKENS) != len(set(SPECIAL_TOKENS)):
+            raise ValueError(f"SPECIAL_TOKENS contains duplicates: {SPECIAL_TOKENS}")
+        all_special_ids = set(llm.tokenizer.all_special_ids)
+        for tid in SPECIAL_TOKENS:
+            if tid not in all_special_ids:
+                raise ValueError(
+                    f"Token ID {tid} is not a special token in the {MODEL_NAME} tokenizer. "
+                    f"Special token IDs: {sorted(all_special_ids)}"
+                )
+        byte_vocab, str_vocab = decode_vocab(llm.tokenizer)
+        self._special_token_bytes = [byte_vocab[tid] for tid in SPECIAL_TOKENS]
+        self._special_token_labels = [str_vocab[tid] for tid in SPECIAL_TOKENS]
+
         params = BeamParams(
             K=BEAM_K,
-            prune_threshold=PRUNE_THRESHOLD
+            prune_threshold=PRUNE_THRESHOLD,
+            **({"special_tokens": self._special_token_bytes} if self._special_token_bytes else {}),
         )
         initial = await ByteBeamState.initial(llm, params,
             **({"initial_context": INITIAL_CONTEXT} if INITIAL_CONTEXT is not None else {}))
@@ -89,7 +112,9 @@ class BytePredictionEngine:
         # Switch to WITH_EOS for generation and get log-probs
         gen_state = state.with_mode(TrieMode.WITH_EOS)
         logp = await gen_state.logp_next()
-        probs = np.exp(logp.ps[:256]).tolist()
+        # Indices 0-255 are bytes, 256-257 are internal to genlm-bytes, 258+ are special tokens.
+        # Strip 256-257 so the returned array is [byte0..byte255, special0, special1, ...].
+        probs = np.exp(np.concatenate([logp.ps[:256], logp.ps[258:]])).tolist()
         return probs
 
     async def _predict_trie(
