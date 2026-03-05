@@ -128,9 +128,7 @@ async function main() {
     remoteLM = createRemoteLM();
     rebuildInterpolation();
     updateHash();
-    renderController?.abort();
-    renderController = new AbortController();
-    render(renderController.signal);
+    rerender();
   }
 
   backendUrlInput.addEventListener("blur", applyConfigChange);
@@ -140,9 +138,7 @@ async function main() {
     sliderValue = parseFloat(mixSlider.value);
     rebuildInterpolation();
     updateHash();
-    renderController?.abort();
-    renderController = new AbortController();
-    render(renderController.signal);
+    rerender();
   });
 
   // --- DOM elements ---
@@ -187,17 +183,22 @@ async function main() {
   // --- Async render with abort support ---
   let renderController: AbortController | null = null;
 
-  async function render(signal: AbortSignal) {
-    const scene = await buildScene(model, cursor, 0.005);
-    if (signal.aborted) return;
-    await renderScene(
-      nodeCtx,
-      labelCtx,
-      scene,
-      nodeCanvas.width,
-      nodeCanvas.height,
-      signal,
-    );
+  function rerender() {
+    renderController?.abort();
+    renderController = new AbortController();
+    const signal = renderController.signal;
+    (async () => {
+      const scene = await buildScene(model, cursor, 0.005);
+      if (signal.aborted) return;
+      await renderScene(
+        nodeCtx,
+        labelCtx,
+        scene,
+        nodeCanvas.width,
+        nodeCanvas.height,
+        signal,
+      );
+    })();
   }
 
   // --- Abortable normalizeCursor ---
@@ -226,9 +227,7 @@ async function main() {
       prefixEl.scrollTop = prefixEl.scrollHeight;
     }
 
-    renderController?.abort();
-    renderController = new AbortController();
-    render(renderController.signal);
+    rerender();
   }
 
   // --- Animation loop ---
@@ -263,8 +262,7 @@ async function main() {
   }
 
   // Initial render, then start loop
-  renderController = new AbortController();
-  render(renderController.signal);
+  rerender();
   requestAnimationFrame(frame);
 }
 
