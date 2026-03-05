@@ -506,3 +506,16 @@ export function forceCleanUtf8(
     return dist.map((p, b) => (isLegal(b) ? p / total : 0));
   };
 }
+
+/**
+ * Adapt a `LanguageModel<Uint8Array>` into a `LanguageModel<number[]>` by
+ * filtering out any prefix elements > 255 (e.g. special-token indices)
+ * before forwarding to the inner model as a `Uint8Array`.
+ */
+export function byteOnly(
+  model: LanguageModel<Uint8Array>,
+): LanguageModel<number[]> {
+  return (prefix: number[]) => {
+    return model(Uint8Array.from(prefix.filter((v) => v <= 255)));
+  };
+}

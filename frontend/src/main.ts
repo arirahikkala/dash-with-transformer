@@ -1,6 +1,7 @@
 import type { Cursor, CDFView, WidgetToken, LanguageModel } from "./types";
 import { createBackendClient } from "./remote/backend";
 import {
+  byteOnly,
   forceCleanUtf8,
   fromByteLevelModel,
   interpolate,
@@ -66,21 +67,18 @@ async function main() {
     },
   );
   statusEl.style.display = "none";
-  const lstmByteLM: LanguageModel<Uint8Array> = trieCache(
-    forceCleanUtf8(lstmPredict),
+  const lstmByteLM: LanguageModel<number[]> = byteOnly(
+    trieCache(forceCleanUtf8(lstmPredict)),
   );
 
   // --- Remote side ---
   let currentMinProb = 0;
 
-  function createRemoteLM(): LanguageModel<Uint8Array> {
+  function createRemoteLM(): LanguageModel<number[]> {
     const { predictBytes } = createBackendClient(backendUrl);
-    const prefixBytes = new TextEncoder().encode(remoteModelCallPrefix);
-    return (prefix: Uint8Array) => {
-      const full = new Uint8Array(prefixBytes.length + prefix.length);
-      full.set(prefixBytes);
-      full.set(prefix, prefixBytes.length);
-      return predictBytes(full, currentMinProb);
+    const prefixBytes = [...new TextEncoder().encode(remoteModelCallPrefix)];
+    return (prefix: number[]) => {
+      return predictBytes([...prefixBytes, ...prefix], currentMinProb);
     };
   }
 
@@ -103,7 +101,7 @@ async function main() {
   const model: CDFView<readonly WidgetToken[], WidgetToken> =
     fromByteLevelModel((prefix, minProb) => {
       currentMinProb = minProb;
-      return interpolated(prefix);
+      return interpolated(Array.from(prefix));
     }, []);
 
   // --- Hash ---

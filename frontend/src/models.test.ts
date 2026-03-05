@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   fromByteLevelModel,
   forceCleanUtf8,
+  byteOnly,
   interpolate,
   type ByteLevelModel,
 } from "./models";
@@ -1123,5 +1124,35 @@ describe("forceCleanUtf8", () => {
     expect(dist[0xad]).toBeCloseTo(1 / 3);
     expect(dist[0xbf]).toBeCloseTo(1 / 3);
     expect(dist[0x61]).toBe(0);
+  });
+});
+
+describe("byteOnly", () => {
+  it("passes through byte-only prefixes unchanged", async () => {
+    const calls: number[][] = [];
+    const inner: LanguageModel<Uint8Array> = async (prefix) => {
+      calls.push(Array.from(prefix));
+      return [0.5, 0.5];
+    };
+    const adapted = byteOnly(inner);
+    await adapted([0x41, 0x42]);
+    expect(calls).toEqual([[0x41, 0x42]]);
+  });
+
+  it("strips values > 255 from the prefix", async () => {
+    const calls: number[][] = [];
+    const inner: LanguageModel<Uint8Array> = async (prefix) => {
+      calls.push(Array.from(prefix));
+      return [1.0];
+    };
+    const adapted = byteOnly(inner);
+    await adapted([0x41, 256, 0x42, 1000]);
+    expect(calls).toEqual([[0x41, 0x42]]);
+  });
+
+  it("forwards the distribution from the inner model", async () => {
+    const inner: LanguageModel<Uint8Array> = async () => [0.3, 0.7];
+    const dist = await byteOnly(inner)([300, 0x61]);
+    expect(dist).toEqual([0.3, 0.7]);
   });
 });

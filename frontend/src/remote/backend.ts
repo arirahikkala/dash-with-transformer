@@ -32,14 +32,14 @@ interface TrieResponse {
 // ---------------------------------------------------------------------------
 
 interface PendingRequest {
-  prefix: Uint8Array;
+  prefix: number[];
   minProb: number;
   resolve: (dist: readonly number[]) => void;
   reject: (err: Error) => void;
 }
 
 export interface BackendClient {
-  predictBytes(prefix: Uint8Array, minProb: number): Promise<readonly number[]>;
+  predictBytes(prefix: number[], minProb: number): Promise<readonly number[]>;
 }
 
 export function createBackendClient(backendUrl: string): BackendClient {
@@ -48,12 +48,9 @@ export function createBackendClient(backendUrl: string): BackendClient {
   let pending: PendingRequest[] = [];
   let flushScheduled = false;
 
-  function populateTrieCache(prefix: Uint8Array, trie: TrieResponse): void {
+  function populateTrieCache(prefix: number[], trie: TrieResponse): void {
     for (const [byteStr, childTrie] of Object.entries(trie.children)) {
-      const byte = Number(byteStr);
-      const childPrefix = new Uint8Array(prefix.length + 1);
-      childPrefix.set(prefix);
-      childPrefix[prefix.length] = byte;
+      const childPrefix = [...prefix, Number(byteStr)];
       cache.getOrSet(childPrefix, () => Promise.resolve(childTrie.dist));
       populateTrieCache(childPrefix, childTrie);
     }
@@ -65,14 +62,10 @@ export function createBackendClient(backendUrl: string): BackendClient {
     pending = [];
     if (batch.length === 0) return;
 
-    const inputs = batch.map((req) => {
-      let bin = "";
-      for (const b of req.prefix) bin += String.fromCharCode(b);
-      return {
-        prefix: btoa(bin),
-        min_prob: req.minProb,
-      };
-    });
+    const inputs = batch.map((req) => ({
+      prefix: req.prefix,
+      min_prob: req.minProb,
+    }));
 
     try {
       const body = JSON.stringify({ inputs });
@@ -107,7 +100,7 @@ export function createBackendClient(backendUrl: string): BackendClient {
   }
 
   function predictBytes(
-    prefix: Uint8Array,
+    prefix: number[],
     minProb: number,
   ): Promise<readonly number[]> {
     const cached = cache.get(prefix);
