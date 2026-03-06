@@ -126,7 +126,7 @@ async function main() {
     } else {
       const labels = specialTokens.map((st) => st.label).join("  ");
       prefixLabelEl.childNodes[0].textContent =
-        base + " (special tokens: " + labels + ")\n";
+        base + " (special tokens parsed inline: " + labels + ")\n";
     }
   }
 
