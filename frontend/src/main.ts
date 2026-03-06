@@ -11,8 +11,10 @@ import {
   forceCleanUtf8,
   fromByteLevelModel,
   interpolate,
+  passMinProb,
   trieCache,
 } from "./models";
+import type { ByteLevelModel } from "./models";
 import { normalizeCursor } from "./cursor";
 import { buildScene } from "./scene";
 import { renderScene } from "./render";
@@ -109,7 +111,6 @@ async function main() {
   );
 
   // --- Remote side ---
-  let currentMinProb = 0;
 
   // Mutable array — fromByteLevelModel iterates it on each call,
   // so in-place mutations are picked up automatically.
@@ -130,38 +131,38 @@ async function main() {
     }
   }
 
-  function createRemoteLM(): LanguageModel<number[]> {
+  function createRemoteBLM(): ByteLevelModel {
     const { predictBytes } = createBackendClient(backendUrl);
-    return (prefix: number[]) => {
+    return (prefix: Uint8Array, minProb: number) => {
       const prefixTokens = encodePrefixWithSpecialTokens(
         remoteModelCallPrefix,
         specialTokens,
       );
-      return predictBytes([...prefixTokens, ...prefix], currentMinProb);
+      return predictBytes([...prefixTokens, ...prefix], minProb);
     };
   }
 
-  let remoteLM = createRemoteLM();
-
-  // --- Interpolation ---
-  let interpolated = interpolate([
-    { model: lstmByteLM, weight: 1 - sliderValue },
-    { model: remoteLM, weight: sliderValue },
-  ]);
-
-  function rebuildInterpolation() {
-    interpolated = interpolate([
-      { model: lstmByteLM, weight: 1 - sliderValue },
-      { model: remoteLM, weight: sliderValue },
-    ]);
-  }
+  let remoteBLM = createRemoteBLM();
 
   // --- Stable model (never reassigned) ---
+  // passMinProb threads minProb from fromByteLevelModel through to remoteBLM.
+  // The adapter closes over mutable sliderValue and remoteBLM so that slider
+  // changes and backend reconnects are picked up automatically.
   const model: CDFView<readonly WidgetToken[], WidgetToken> =
-    fromByteLevelModel((prefix, minProb) => {
-      currentMinProb = minProb;
-      return interpolated(Array.from(prefix));
-    }, specialTokens);
+    fromByteLevelModel(
+      passMinProb((remoteLM) => {
+        const remoteAsNumber: LanguageModel<number[]> = (prefix) =>
+          remoteLM(Uint8Array.from(prefix));
+        return async (prefix) => {
+          const mixed = interpolate([
+            { model: lstmByteLM, weight: 1 - sliderValue },
+            { model: remoteAsNumber, weight: sliderValue },
+          ]);
+          return mixed(Array.from(prefix));
+        };
+      })((prefix, minProb) => remoteBLM(prefix, minProb)),
+      specialTokens,
+    );
 
   // --- Hash ---
   function updateHash() {
@@ -199,8 +200,7 @@ async function main() {
     backendUrl = newUrl;
     remoteModelCallPrefix = newPrefix;
     if (urlChanged) await refreshSpecialTokens();
-    remoteLM = createRemoteLM();
-    rebuildInterpolation();
+    remoteBLM = createRemoteBLM();
     updateHash();
     rerender();
   }
@@ -210,7 +210,6 @@ async function main() {
 
   mixSlider.addEventListener("input", () => {
     sliderValue = parseFloat(mixSlider.value);
-    rebuildInterpolation();
     updateHash();
     rerender();
   });
