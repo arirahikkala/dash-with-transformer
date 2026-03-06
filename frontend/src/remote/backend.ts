@@ -140,7 +140,7 @@ export function createBackendClient(backendUrl: string): BackendClient {
       });
       if (!flushScheduled) {
         flushScheduled = true;
-        setTimeout(flush, 500);
+        queueMicrotask(flush);
       }
     });
     cache.set(prefix, promise);
