@@ -261,7 +261,7 @@ async function main() {
     renderController = new AbortController();
     const signal = renderController.signal;
     (async () => {
-      const scene = await buildScene(model, cursor, 0.005);
+      const scene = await buildScene(model, cursor, 0.015);
       if (signal.aborted) return;
       await renderScene(
         nodeCtx,
