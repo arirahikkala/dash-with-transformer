@@ -187,8 +187,8 @@ async function main() {
     updatePrefixLabel();
   }
 
-  // Fire initial fetch (don't block startup)
-  refreshSpecialTokens();
+  // Fetch special tokens before first render so the initial prefix is parsed correctly
+  await refreshSpecialTokens();
 
   // --- Config change handlers ---
   async function applyConfigChange() {
