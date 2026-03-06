@@ -6,6 +6,13 @@ This project is unaffiliated with [Dasher](https://github.com/dasher-project), b
 
 The front-end defaults to a small in-browser CPU LSTM model trained on FineWeb, which should somewhat work. You may also set up the backend, which uses vLLM and seems to work based on casual testing.
 
+Some interesting features:
+
+- The backend runs tokenized models, but lowers them to byte-level ones (with an assumption that they model UTF-8).
+- You can input any Unicode codepoint the model predicts.
+- You can also input special tokens (but have to pass the list of supported special token IDs to the backend).
+- You can interpolate between the LSTM and backend model. The LSTM by itself is okay-ish for English text input, hopefully somewhat more useful than the original Dasher's PPM model anyway. LLMs, especially post-trained ones, are often enormously too confident to be used for input, and the widget will struggle to display their predictions well.
+
 ## Architecture
 
 - **Frontend** (`frontend/`) — Vite + TypeScript.
