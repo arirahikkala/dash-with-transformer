@@ -1,4 +1,4 @@
-# Dash with Transformer
+# 🦄 Dash with Transformer
 
 An information-theory-based text input method powered by a language model. It displays a widget that maps a language model's probability distribution onto a zoomable 2D space: you glide rightward to write, up/down to choose content, and leftward to correct mistakes.
 
