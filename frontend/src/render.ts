@@ -113,14 +113,21 @@ async function renderNodes(
         }
       }
 
-      // S-spline from parent label to this label when child is left of parent
-      if (parentExtent && labelX < parentExtent.x0) {
+      // S-spline from parent label to this label when child doesn't
+      // vertically overlap parent and is left enough to warrant a connector
+      if (
+        parentExtent &&
+        !(ly0 < parentExtent.y1 && ly1 > parentExtent.y0) &&
+        labelX < parentExtent.x0 + 50
+      ) {
         const startX = parentExtent.x0;
         const startY = (parentExtent.y0 + parentExtent.y1) / 2;
         const endX = labelX + textWidth;
         const endY = labelY;
         const bulge = 200;
-        labelCtx.strokeStyle = "rgba(0,0,0,0.25)";
+        const dist = parentExtent.x0 - labelX;
+        const alpha = 0.25 * Math.min(1, dist / 50);
+        labelCtx.strokeStyle = `rgba(0,0,0,${alpha})`;
         labelCtx.lineWidth = 1;
         labelCtx.beginPath();
         labelCtx.moveTo(startX, startY);
