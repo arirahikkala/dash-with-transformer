@@ -11,7 +11,7 @@
  */
 
 import type { CDFView, Cursor, SceneNode, Scene } from "./types";
-import { first } from "./types";
+import { first } from "./async-iterables";
 
 // ---------------------------------------------------------------------------
 // Phase 2: Ascend to scene root

@@ -4,7 +4,7 @@
  */
 
 import type { CDFView, Cursor } from "./types";
-import { first } from "./types";
+import { first } from "./async-iterables";
 
 // ---------------------------------------------------------------------------
 // Normalisation

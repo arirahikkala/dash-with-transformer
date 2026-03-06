@@ -13,6 +13,40 @@ import {
   type WidgetToken,
 } from "./types";
 
+/**
+ * Adapt a simple probability-list model into a full CDFView
+ * that computes cumulative extents and handles range/size filtering.
+ */
+export function adaptModel<P>(inner: LanguageModel<P>): CDFView<P, number> {
+  return async function* (
+    prefix,
+    rangeStart,
+    rangeEnd,
+    minProb,
+    specificToken,
+  ) {
+    const dist = await inner(prefix);
+    let cum = 0;
+    for (let token = 0; token < dist.length; token++) {
+      const probability = dist[token];
+      if (probability === 0) continue;
+      const start = cum;
+      const end = cum + probability;
+      cum = end;
+      if (specificToken !== undefined) {
+        if (token === specificToken) {
+          yield { token, start, end };
+          return;
+        }
+        continue;
+      }
+      if (end <= rangeStart || start > rangeEnd) continue;
+      if (probability < minProb) continue;
+      yield { token, start, end };
+    }
+  };
+}
+
 // ---------------------------------------------------------------------------
 // UTF-8 helpers
 // ---------------------------------------------------------------------------

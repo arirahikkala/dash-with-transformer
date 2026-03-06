@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Cursor, SceneNode, Scene } from "./types";
-import { adaptModel } from "./types";
+import { adaptModel } from "./models";
 import { buildScene } from "./scene";
 
 // ---------------------------------------------------------------------------

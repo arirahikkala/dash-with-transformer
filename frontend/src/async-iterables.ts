@@ -52,6 +52,14 @@ export async function* mergeAsyncIterables<T>(
  * Yield the results of an array of promises in resolution order
  * (whichever settles first is yielded first), rather than in array order.
  */
+/** Extract the first element from an async iterable, or undefined if empty. */
+export async function first<T>(iter: AsyncIterable<T>): Promise<T | undefined> {
+  for await (const item of iter) {
+    return item;
+  }
+  return undefined;
+}
+
 export async function* racePromises<T>(
   promises: Promise<T>[],
 ): AsyncGenerator<T> {

@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import type { CDFView, Cursor, TokenCDFExtent } from "./types";
-import { adaptModel } from "./types";
 import { normalizeCursor } from "./cursor";
-import { first } from "./types";
+import { first } from "./async-iterables";
+import { adaptModel } from "./models";
 
 // ---------------------------------------------------------------------------
 // Helpers

@@ -37,7 +37,7 @@ export interface TokenCDFExtent<T> {
 
 /**
  * A simple language model that returns a plain probability distribution
- * (without cumulative extents or filtering).  Use `adaptModel` to convert
+ * (without cumulative extents or filtering).  Use `adaptModel` (in models.ts) to convert
  * to a full `CDFView`.
  *
  * Implementations must return the *full* next-token distribution: one entry
@@ -78,40 +78,6 @@ export type CDFView<P, T> = (
   specificToken?: T,
 ) => AsyncIterable<TokenCDFExtent<T>>;
 
-/**
- * Adapt a simple probability-list model into a full CDFView
- * that computes cumulative extents and handles range/size filtering.
- */
-export function adaptModel<P>(inner: LanguageModel<P>): CDFView<P, number> {
-  return async function* (
-    prefix,
-    rangeStart,
-    rangeEnd,
-    minProb,
-    specificToken,
-  ) {
-    const dist = await inner(prefix);
-    let cum = 0;
-    for (let token = 0; token < dist.length; token++) {
-      const probability = dist[token];
-      if (probability === 0) continue;
-      const start = cum;
-      const end = cum + probability;
-      cum = end;
-      if (specificToken !== undefined) {
-        if (token === specificToken) {
-          yield { token, start, end };
-          return;
-        }
-        continue;
-      }
-      if (end <= rangeStart || start > rangeEnd) continue;
-      if (probability < minProb) continue;
-      yield { token, start, end };
-    }
-  };
-}
-
 /** Cursor: a discrete prefix plus a continuous adjustment. */
 export interface Cursor<T> {
   readonly prefix: readonly T[];
@@ -139,12 +105,4 @@ export interface Scene<T> {
   children: AsyncIterable<SceneNode<T>>;
   /** Length of the prefix at the scene root. */
   prefixLength: number;
-}
-
-/** Extract the first element from an async iterable, or undefined if empty. */
-export async function first<T>(iter: AsyncIterable<T>): Promise<T | undefined> {
-  for await (const item of iter) {
-    return item;
-  }
-  return undefined;
 }
