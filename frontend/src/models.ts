@@ -69,8 +69,156 @@ function decodeUtf8Bytes(bytes: number[]): number {
   }
 }
 
+/**
+ * Return a predicate that accepts exactly the byte values that are legal
+ * as the next byte in a UTF-8 stream whose tail is `prefix`.
+ */
+function legalUtf8NextByte(prefix: Uint8Array): (byte: number) => boolean {
+  const len = prefix.length;
+
+  // Scan backwards (up to 3 bytes) to find the lead byte of the
+  // current (potentially incomplete) character.
+  let leadByte = -1;
+  let consumed = 0; // bytes consumed from lead to end of prefix
+  for (let back = 0; back < Math.min(4, len); back++) {
+    const b = prefix[len - 1 - back];
+    if (b < 0x80) {
+      // ASCII — complete single-byte character; we're at a boundary.
+      break;
+    }
+    if (b >= 0xc0) {
+      // Lead byte found.
+      const seqLen = utf8SeqLength(b);
+      consumed = back + 1;
+      if (seqLen > 0 && consumed < seqLen) {
+        leadByte = b;
+      }
+      break;
+    }
+    // Continuation byte (0x80–0xBF) — keep scanning.
+  }
+
+  if (leadByte === -1) {
+    // At character boundary: legal starts are ASCII + valid lead bytes.
+    return (b: number) =>
+      b <= 0x7f ||
+      (b >= 0xc2 && b <= 0xdf) ||
+      (b >= 0xe0 && b <= 0xef) ||
+      (b >= 0xf0 && b <= 0xf4);
+  }
+
+  // Mid-character: we need a continuation byte.
+  // The first continuation after the lead may have a restricted range.
+  if (consumed === 1) {
+    if (leadByte === 0xe0) return (b: number) => b >= 0xa0 && b <= 0xbf;
+    if (leadByte === 0xed) return (b: number) => b >= 0x80 && b <= 0x9f;
+    if (leadByte === 0xf0) return (b: number) => b >= 0x90 && b <= 0xbf;
+    if (leadByte === 0xf4) return (b: number) => b >= 0x80 && b <= 0x8f;
+  }
+
+  // General continuation byte.
+  return (b: number) => b >= 0x80 && b <= 0xbf;
+}
+
 // ---------------------------------------------------------------------------
-// Multi-byte expansion
+// Generic model adapters
+// ---------------------------------------------------------------------------
+
+/**
+ * Interpolate between one or more language models, creating a per-conditional
+ * weighted mixture.
+ *
+ * Models may have different vocabulary sizes; the result is in the space of
+ * the largest vocabulary, with missing tokens treated as probability 0.
+ *
+ * Components with weight 0 are not queried at all.
+ *
+ * Weights are normalized to sum to 1. Negative weights throw an error.
+ */
+export function interpolate<P>(
+  components: { model: LanguageModel<P>; weight: number }[],
+): LanguageModel<P> {
+  if (components.length === 0) {
+    throw new Error("interpolate requires at least one model");
+  }
+  for (const { weight } of components) {
+    if (weight < 0) {
+      throw new Error(`Negative weight: ${weight}`);
+    }
+  }
+  const active = components.filter((c) => c.weight > 0);
+  if (active.length === 0) {
+    throw new Error("Total weight must be positive");
+  }
+  if (active.length === 1) {
+    return active[0].model;
+  }
+  const totalWeight = active.reduce((s, c) => s + c.weight, 0);
+  const weights = active.map((c) => c.weight / totalWeight);
+  const models = active.map((c) => c.model);
+
+  return async (prefix) => {
+    const dists = await Promise.all(models.map((m) => m(prefix)));
+    const len = Math.max(...dists.map((d) => d.length));
+    const result = new Array(len).fill(0);
+    for (let i = 0; i < dists.length; i++) {
+      const d = dists[i];
+      for (let t = 0; t < d.length; t++) {
+        result[t] += weights[i] * d[t];
+      }
+    }
+    return result;
+  };
+}
+
+/**
+ * Byte-trie cache for a LanguageModel over byte prefixes.
+ * Each unique prefix is computed at most once; subsequent queries
+ * return the cached result.  Old entries are evicted automatically.
+ */
+export function trieCache<P extends Iterable<number>>(
+  model: LanguageModel<P>,
+): LanguageModel<P> {
+  const cache = createTrieCache<Promise<readonly number[]>>();
+  return (prefix: P) => cache.getOrSet(prefix, () => model(prefix));
+}
+
+/**
+ * Wrap a byte-level model to zero out any next-byte predictions that
+ * would violate UTF-8 encoding rules, and renormalise the distribution.
+ */
+export function forceCleanUtf8(
+  model: LanguageModel<Uint8Array>,
+): LanguageModel<Uint8Array> {
+  return async (prefix: Uint8Array) => {
+    const dist = await model(prefix);
+    const isLegal = legalUtf8NextByte(prefix);
+
+    let total = 0;
+    for (let b = 0; b < dist.length; b++) {
+      if (isLegal(b)) total += dist[b];
+    }
+    if (total === 0) return dist.map(() => 0);
+
+    return dist.map((p, b) => (isLegal(b) ? p / total : 0));
+  };
+}
+
+/**
+ * Adapt a `LanguageModel<Uint8Array>` into a `LanguageModel<number[]>` by
+ * filtering out any prefix elements > 255 (e.g. special-token indices)
+ * before forwarding to the inner model as a `Uint8Array`.
+ */
+export function byteOnly(
+  model: LanguageModel<Uint8Array>,
+): LanguageModel<number[]> {
+  return (prefix: number[]) => {
+    return model(Uint8Array.from(prefix.filter((v) => v <= 255)));
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Byte-level model → codepoint-level CDFView
 // ---------------------------------------------------------------------------
 
 /**
@@ -181,10 +329,6 @@ async function* expandMultiByte(
   yield* mergeAsyncIterables(subtrees);
 }
 
-// ---------------------------------------------------------------------------
-// Specific-token lookup
-// ---------------------------------------------------------------------------
-
 /**
  * Look up a single token's cumulative extent in the byte-level model.
  * For UnicodeCodepoints, traces through the UTF-8 byte chain.
@@ -241,10 +385,6 @@ async function lookupSpecificToken(
     end: cumStart + probSoFar,
   };
 }
-
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
 
 /**
  * Adapt a byte-level UTF-8 model into a WidgetToken-level CDFView.
@@ -365,157 +505,5 @@ export function fromByteLevelModel(
     }
 
     yield* mergeAsyncIterables(expansions);
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Language model interpolation
-// ---------------------------------------------------------------------------
-
-/**
- * Interpolate between one or more language models, creating a per-conditional
- * weighted mixture.
- *
- * Models may have different vocabulary sizes; the result is in the space of
- * the largest vocabulary, with missing tokens treated as probability 0.
- *
- * Components with weight 0 are not queried at all.
- *
- * Weights are normalized to sum to 1. Negative weights throw an error.
- */
-export function interpolate<P>(
-  components: { model: LanguageModel<P>; weight: number }[],
-): LanguageModel<P> {
-  if (components.length === 0) {
-    throw new Error("interpolate requires at least one model");
-  }
-  for (const { weight } of components) {
-    if (weight < 0) {
-      throw new Error(`Negative weight: ${weight}`);
-    }
-  }
-  const active = components.filter((c) => c.weight > 0);
-  if (active.length === 0) {
-    throw new Error("Total weight must be positive");
-  }
-  if (active.length === 1) {
-    return active[0].model;
-  }
-  const totalWeight = active.reduce((s, c) => s + c.weight, 0);
-  const weights = active.map((c) => c.weight / totalWeight);
-  const models = active.map((c) => c.model);
-
-  return async (prefix) => {
-    const dists = await Promise.all(models.map((m) => m(prefix)));
-    const len = Math.max(...dists.map((d) => d.length));
-    const result = new Array(len).fill(0);
-    for (let i = 0; i < dists.length; i++) {
-      const d = dists[i];
-      for (let t = 0; t < d.length; t++) {
-        result[t] += weights[i] * d[t];
-      }
-    }
-    return result;
-  };
-}
-
-// ---------------------------------------------------------------------------
-// UTF-8 validity filtering for byte-level models
-// ---------------------------------------------------------------------------
-
-/**
- * Return a predicate that accepts exactly the byte values that are legal
- * as the next byte in a UTF-8 stream whose tail is `prefix`.
- */
-function legalUtf8NextByte(prefix: Uint8Array): (byte: number) => boolean {
-  const len = prefix.length;
-
-  // Scan backwards (up to 3 bytes) to find the lead byte of the
-  // current (potentially incomplete) character.
-  let leadByte = -1;
-  let consumed = 0; // bytes consumed from lead to end of prefix
-  for (let back = 0; back < Math.min(4, len); back++) {
-    const b = prefix[len - 1 - back];
-    if (b < 0x80) {
-      // ASCII — complete single-byte character; we're at a boundary.
-      break;
-    }
-    if (b >= 0xc0) {
-      // Lead byte found.
-      const seqLen = utf8SeqLength(b);
-      consumed = back + 1;
-      if (seqLen > 0 && consumed < seqLen) {
-        leadByte = b;
-      }
-      break;
-    }
-    // Continuation byte (0x80–0xBF) — keep scanning.
-  }
-
-  if (leadByte === -1) {
-    // At character boundary: legal starts are ASCII + valid lead bytes.
-    return (b: number) =>
-      b <= 0x7f ||
-      (b >= 0xc2 && b <= 0xdf) ||
-      (b >= 0xe0 && b <= 0xef) ||
-      (b >= 0xf0 && b <= 0xf4);
-  }
-
-  // Mid-character: we need a continuation byte.
-  // The first continuation after the lead may have a restricted range.
-  if (consumed === 1) {
-    if (leadByte === 0xe0) return (b: number) => b >= 0xa0 && b <= 0xbf;
-    if (leadByte === 0xed) return (b: number) => b >= 0x80 && b <= 0x9f;
-    if (leadByte === 0xf0) return (b: number) => b >= 0x90 && b <= 0xbf;
-    if (leadByte === 0xf4) return (b: number) => b >= 0x80 && b <= 0x8f;
-  }
-
-  // General continuation byte.
-  return (b: number) => b >= 0x80 && b <= 0xbf;
-}
-
-/**
- * Byte-trie cache for a LanguageModel over byte prefixes.
- * Each unique prefix is computed at most once; subsequent queries
- * return the cached result.  Old entries are evicted automatically.
- */
-export function trieCache<P extends Iterable<number>>(
-  model: LanguageModel<P>,
-): LanguageModel<P> {
-  const cache = createTrieCache<Promise<readonly number[]>>();
-  return (prefix: P) => cache.getOrSet(prefix, () => model(prefix));
-}
-
-/**
- * Wrap a byte-level model to zero out any next-byte predictions that
- * would violate UTF-8 encoding rules, and renormalise the distribution.
- */
-export function forceCleanUtf8(
-  model: LanguageModel<Uint8Array>,
-): LanguageModel<Uint8Array> {
-  return async (prefix: Uint8Array) => {
-    const dist = await model(prefix);
-    const isLegal = legalUtf8NextByte(prefix);
-
-    let total = 0;
-    for (let b = 0; b < dist.length; b++) {
-      if (isLegal(b)) total += dist[b];
-    }
-    if (total === 0) return dist.map(() => 0);
-
-    return dist.map((p, b) => (isLegal(b) ? p / total : 0));
-  };
-}
-
-/**
- * Adapt a `LanguageModel<Uint8Array>` into a `LanguageModel<number[]>` by
- * filtering out any prefix elements > 255 (e.g. special-token indices)
- * before forwarding to the inner model as a `Uint8Array`.
- */
-export function byteOnly(
-  model: LanguageModel<Uint8Array>,
-): LanguageModel<number[]> {
-  return (prefix: number[]) => {
-    return model(Uint8Array.from(prefix.filter((v) => v <= 255)));
   };
 }
