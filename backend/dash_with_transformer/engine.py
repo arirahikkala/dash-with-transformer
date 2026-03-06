@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from collections import OrderedDict
 
 import numpy as np
@@ -14,6 +15,7 @@ PRUNE_THRESHOLD = float(os.environ.get("PRUNE_THRESHOLD", "0.05"))
 MODEL_NAME = os.environ.get("MODEL_NAME", "gpt2-medium")
 MAX_MODEL_LEN = int(os.environ["MAX_MODEL_LEN"]) if "MAX_MODEL_LEN" in os.environ else None
 CACHE_MAX_SIZE = int(os.environ.get("CACHE_MAX_SIZE", "10000"))
+TRIE_TIME_LIMIT = float(os.environ.get("TRIE_TIME_LIMIT", "1.0"))
 INITIAL_CONTEXT = (
     [int(x) for x in os.environ["INITIAL_CONTEXT"].split(",")]
     if "INITIAL_CONTEXT" in os.environ
@@ -119,29 +121,28 @@ class BytePredictionEngine:
         prefix: tuple[int, ...],
         prob_so_far: float,
         min_prob: float,
-        depth: int = 0,
+        deadline: float,
     ) -> dict:
         """Recursively build a trie of next-token distributions.
 
         Only expands children whose probability >= min_prob.
-        Stops recursing beyond *depth* 5.
+        Stops expanding when the time limit (deadline) is reached.
         """
         dist = await self._predict_one(prefix)
         children: dict[int, dict] = {}
+        if time.monotonic() >= deadline:
+            return {"dist": dist, "children": children}
         eligible = [
             i for i in range(len(dist))
             if dist[i] != 0 and prob_so_far * dist[i] >= min_prob
         ]
-        # also break up the recursion if at any point it branches too eagerly
-        if depth >= 5 or len(eligible) >= 3:
-            return {"dist": dist, "children": children}
         if eligible:
             subtries = await asyncio.gather(*(
                 self._predict_trie(
                     prefix + (tok,),
                     prob_so_far * dist[tok],
                     min_prob,
-                    depth + 1,
+                    deadline,
                 )
                 for tok in eligible
             ))
@@ -158,7 +159,8 @@ class BytePredictionEngine:
         if not inputs:
             return []
 
+        deadline = time.monotonic() + TRIE_TIME_LIMIT
         return list(await asyncio.gather(*(
-            self._predict_trie(ctx, 1.0, min_prob)
+            self._predict_trie(ctx, 1.0, min_prob, deadline)
             for ctx, min_prob in inputs
         )))

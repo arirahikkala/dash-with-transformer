@@ -66,6 +66,7 @@ Configured in `engine.py` and read at import time:
 | `CACHE_MAX_SIZE` | `10000` | Maximum number of entries in the LRU state cache |
 | `INITIAL_CONTEXT` | (none) | Comma-separated token IDs fed as initial context before inference. |
 | `MAX_MODEL_LEN` | (none) | Maximum sequence length, passed as max_model_len to vLLM. |
+| `TRIE_TIME_LIMIT` | `1.0` | Time limit in seconds for trie expansion per request. When exceeded, the server returns whatever trie it has built so far. |
 
 ## Tests
 
