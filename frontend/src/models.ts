@@ -23,18 +23,23 @@ function codepointsToUtf8(codepoints: readonly number[]): Uint8Array {
 }
 
 /**
- * Encode a WidgetToken prefix to UTF-8 bytes for the byte-level model.
- * UnicodeCodepoints are encoded as UTF-8; SpecialTokens have no byte
- * representation (prefix encoding for special tokens is not yet supported).
+ * Encode a WidgetToken prefix to a byte-level prefix for the byte-level model.
+ * UnicodeCodepoints are encoded as UTF-8 bytes (values 0–255);
+ * SpecialTokens are represented by their index (≥ 256).
  */
 function widgetPrefixToBytes(prefix: readonly WidgetToken[]): number[] {
-  const codepoints: number[] = [];
+  const result: number[] = [];
   for (const token of prefix) {
     if (token.type === "codepoint") {
-      codepoints.push(token.codepoint);
+      const bytes = new TextEncoder().encode(
+        String.fromCodePoint(token.codepoint),
+      );
+      for (const b of bytes) result.push(b);
+    } else {
+      result.push(token.index);
     }
   }
-  return [...new TextEncoder().encode(String.fromCodePoint(...codepoints))];
+  return result;
 }
 
 /** Number of bytes in a UTF-8 sequence given the lead byte, or 0 if invalid. */
