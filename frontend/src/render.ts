@@ -1,5 +1,13 @@
 import type { Scene, SceneNode, WidgetToken } from "./types";
 
+/** A label's bounding box, used to avoid overlapping labels. */
+interface LabelExtent {
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+}
+
 /** Display label for a widget token. */
 function label(token: WidgetToken): string {
   if (token.type === "special") return token.label;
@@ -46,7 +54,7 @@ async function renderNodes(
   nodeWidth: number,
   height: number,
   signal: AbortSignal,
-  labelMinX: number,
+  labelExtents: LabelExtent[],
   depth: number,
 ): Promise<void> {
   for await (const node of nodes) {
@@ -68,8 +76,8 @@ async function renderNodes(
     nodeCtx.lineTo(nodeWidth, py0);
     nodeCtx.stroke();
 
-    // Label on label canvas, pushed right past parent's label
-    let childLabelMinX = labelMinX;
+    // Label on label canvas, pushed right only where ancestors vertically overlap
+    let childExtents = labelExtents;
     if (side >= 10) {
       const fontSize = Math.min(Math.max(side * 0.7, 10), 28);
       labelCtx.font = `${fontSize}px monospace`;
@@ -77,7 +85,7 @@ async function renderNodes(
       labelCtx.textBaseline = "middle";
       labelCtx.textAlign = "left";
       const labelText = label(node.token);
-      const labelX = Math.max(x0 + 4, labelMinX);
+      const textWidth = labelCtx.measureText(labelText).width;
       const pad = 4;
       const halfFont = fontSize / 2;
       const centerY = py0 + side / 2;
@@ -90,8 +98,24 @@ async function renderNodes(
         py0 + halfFont + pad,
         Math.min(py1 - halfFont - pad, screenClamped),
       );
+      const ly0 = labelY - halfFont;
+      const ly1 = labelY + halfFont;
+
+      // Push labelX as far left as possible while staying in node bounds
+      // and not overlapping any ancestor label extent
+      let labelX = x0 + 4;
+      for (const ext of labelExtents) {
+        // Check vertical overlap
+        if (ly0 < ext.y1 && ly1 > ext.y0) {
+          labelX = Math.max(labelX, ext.x1);
+        }
+      }
+
       labelCtx.fillText(labelText, labelX, labelY);
-      childLabelMinX = labelX + labelCtx.measureText(labelText).width + 1;
+      childExtents = [
+        ...labelExtents,
+        { x0: labelX, x1: labelX + textWidth + 1, y0: ly0, y1: ly1 },
+      ];
     }
 
     // Children paint on top (smaller squares nested inside)
@@ -102,7 +126,7 @@ async function renderNodes(
       nodeWidth,
       height,
       signal,
-      childLabelMinX,
+      childExtents,
       depth + 1,
     );
   }
@@ -131,7 +155,7 @@ export async function renderScene(
     nodeWidth,
     height,
     signal,
-    0,
+    [],
     scene.prefixLength,
   );
 }
