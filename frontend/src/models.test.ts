@@ -48,15 +48,13 @@ function makeDistWithSpecial(
 }
 
 /** Hex key for a byte prefix (empty prefix → ""). */
-function prefixKey(buf: Uint8Array): string {
-  return Array.from(buf)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+function prefixKey(buf: readonly number[]): string {
+  return buf.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** Create a mock byte-level model from a hex-key → dist table. */
 function makeMockModel(table: Record<string, number[]>): ByteLevelModel {
-  return async (prefix: Uint8Array) => {
+  return async (prefix: readonly number[]) => {
     const key = prefixKey(prefix);
     const result = table[key];
     if (!result) throw new Error(`Unexpected byte prefix: "${key}"`);
@@ -70,7 +68,7 @@ function makeTrackingModel(table: Record<string, number[]>): {
   calls: string[];
 } {
   const calls: string[] = [];
-  const model: ByteLevelModel = async (prefix: Uint8Array) => {
+  const model: ByteLevelModel = async (prefix: readonly number[]) => {
     const key = prefixKey(prefix);
     calls.push(key);
     const result = table[key];
@@ -544,7 +542,7 @@ describe("parallelism", () => {
       c3: makeDist({ 0x80: 1.0 }),
     };
 
-    const model: ByteLevelModel = async (prefix: Uint8Array) => {
+    const model: ByteLevelModel = async (prefix: readonly number[]) => {
       const key = prefixKey(prefix);
       activeCalls++;
       maxConcurrency = Math.max(maxConcurrency, activeCalls);
@@ -1011,8 +1009,8 @@ describe("forceCleanUtf8", () => {
    */
   function makePlainModel(
     table: Record<string, Record<number, number>>,
-  ): LanguageModel<Uint8Array> {
-    return async (prefix: Uint8Array) => {
+  ): LanguageModel<readonly number[]> {
+    return async (prefix: readonly number[]) => {
       const key = prefixKey(prefix);
       const sparse = table[key];
       if (!sparse) throw new Error(`Unexpected prefix: "${key}"`);
@@ -1028,7 +1026,7 @@ describe("forceCleanUtf8", () => {
         0xc3: 0.25, // 2-byte lead — legal
       },
     });
-    const dist = await forceCleanUtf8(model)(new Uint8Array([]));
+    const dist = await forceCleanUtf8(model)([]);
 
     expect(dist).toHaveLength(256);
     expect(dist[0x61]).toBeCloseTo(2 / 3);
@@ -1045,7 +1043,7 @@ describe("forceCleanUtf8", () => {
         0xc3: 0.25, // lead — illegal here
       },
     });
-    const dist = await forceCleanUtf8(model)(new Uint8Array([0xc3]));
+    const dist = await forceCleanUtf8(model)([0xc3]);
 
     expect(dist).toHaveLength(256);
     expect(dist[0xa9]).toBeCloseTo(1.0);
@@ -1060,7 +1058,7 @@ describe("forceCleanUtf8", () => {
         0xa0: 0.5, // legal
       },
     });
-    const dist = await forceCleanUtf8(model)(new Uint8Array([0xe0]));
+    const dist = await forceCleanUtf8(model)([0xe0]);
 
     expect(dist).toHaveLength(256);
     expect(dist[0x80]).toBe(0);
@@ -1075,7 +1073,7 @@ describe("forceCleanUtf8", () => {
         0x90: 0.5, // legal
       },
     });
-    const f0Dist = await forceCleanUtf8(f0Model)(new Uint8Array([0xf0]));
+    const f0Dist = await forceCleanUtf8(f0Model)([0xf0]);
     expect(f0Dist).toHaveLength(256);
     expect(f0Dist[0x80]).toBe(0);
     expect(f0Dist[0x90]).toBeCloseTo(1.0);
@@ -1087,7 +1085,7 @@ describe("forceCleanUtf8", () => {
         0x90: 0.5, // beyond U+10FFFF
       },
     });
-    const f4Dist = await forceCleanUtf8(f4Model)(new Uint8Array([0xf4]));
+    const f4Dist = await forceCleanUtf8(f4Model)([0xf4]);
     expect(f4Dist).toHaveLength(256);
     expect(f4Dist[0x80]).toBeCloseTo(1.0);
     expect(f4Dist[0x90]).toBe(0);
@@ -1100,7 +1098,7 @@ describe("forceCleanUtf8", () => {
         0x62: 0.5,
       },
     });
-    const dist = await forceCleanUtf8(model)(new Uint8Array([]));
+    const dist = await forceCleanUtf8(model)([]);
 
     expect(dist).toHaveLength(256);
     expect(dist[0x61]).toBe(0.5);
@@ -1117,7 +1115,7 @@ describe("forceCleanUtf8", () => {
         0x61: 0.25, // illegal: not a continuation
       },
     });
-    const dist = await forceCleanUtf8(model)(new Uint8Array([0xe4, 0xb8]));
+    const dist = await forceCleanUtf8(model)([0xe4, 0xb8]);
 
     expect(dist).toHaveLength(256);
     expect(dist[0x80]).toBeCloseTo(1 / 3);

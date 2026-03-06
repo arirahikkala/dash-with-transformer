@@ -106,8 +106,8 @@ async function main() {
     },
   );
   statusEl.style.display = "none";
-  const lstmByteLM: LanguageModel<number[]> = byteOnly(
-    trieCache(forceCleanUtf8(lstmPredict)),
+  const lstmByteLM: LanguageModel<readonly number[]> = trieCache(
+    forceCleanUtf8(byteOnly(lstmPredict)),
   );
 
   // --- Remote side ---
@@ -133,7 +133,7 @@ async function main() {
 
   function createRemoteBLM(): ByteLevelModel {
     const { predictBytes } = createBackendClient(backendUrl);
-    return (prefix: Uint8Array, minProb: number) => {
+    return (prefix: readonly number[], minProb: number) => {
       const prefixTokens = encodePrefixWithSpecialTokens(
         remoteModelCallPrefix,
         specialTokens,
@@ -151,14 +151,12 @@ async function main() {
   const model: CDFView<readonly WidgetToken[], WidgetToken> =
     fromByteLevelModel(
       passMinProb((remoteLM) => {
-        const remoteAsNumber: LanguageModel<number[]> = (prefix) =>
-          remoteLM(Uint8Array.from(prefix));
         return async (prefix) => {
           const mixed = interpolate([
             { model: lstmByteLM, weight: 1 - sliderValue },
-            { model: remoteAsNumber, weight: sliderValue },
+            { model: remoteLM, weight: sliderValue },
           ]);
-          return mixed(Array.from(prefix));
+          return mixed(prefix);
         };
       })((prefix, minProb) => remoteBLM(prefix, minProb)),
       specialTokens,

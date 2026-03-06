@@ -27,14 +27,14 @@ function codepointsToUtf8(codepoints: readonly number[]): Uint8Array {
  * UnicodeCodepoints are encoded as UTF-8; SpecialTokens have no byte
  * representation (prefix encoding for special tokens is not yet supported).
  */
-function widgetPrefixToBytes(prefix: readonly WidgetToken[]): Uint8Array {
+function widgetPrefixToBytes(prefix: readonly WidgetToken[]): number[] {
   const codepoints: number[] = [];
   for (const token of prefix) {
     if (token.type === "codepoint") {
       codepoints.push(token.codepoint);
     }
   }
-  return new TextEncoder().encode(String.fromCodePoint(...codepoints));
+  return [...new TextEncoder().encode(String.fromCodePoint(...codepoints))];
 }
 
 /** Number of bytes in a UTF-8 sequence given the lead byte, or 0 if invalid. */
@@ -73,7 +73,9 @@ function decodeUtf8Bytes(bytes: number[]): number {
  * Return a predicate that accepts exactly the byte values that are legal
  * as the next byte in a UTF-8 stream whose tail is `prefix`.
  */
-function legalUtf8NextByte(prefix: Uint8Array): (byte: number) => boolean {
+function legalUtf8NextByte(
+  prefix: readonly number[],
+): (byte: number) => boolean {
   const len = prefix.length;
 
   // Scan backwards (up to 3 bytes) to find the lead byte of the
@@ -188,9 +190,9 @@ export function trieCache<P extends Iterable<number>>(
  * would violate UTF-8 encoding rules, and renormalise the distribution.
  */
 export function forceCleanUtf8(
-  model: LanguageModel<Uint8Array>,
-): LanguageModel<Uint8Array> {
-  return async (prefix: Uint8Array) => {
+  model: LanguageModel<readonly number[]>,
+): LanguageModel<readonly number[]> {
+  return async (prefix: readonly number[]) => {
     const dist = await model(prefix);
     const isLegal = legalUtf8NextByte(prefix);
 
@@ -211,8 +213,8 @@ export function forceCleanUtf8(
  */
 export function byteOnly(
   model: LanguageModel<Uint8Array>,
-): LanguageModel<number[]> {
-  return (prefix: number[]) => {
+): LanguageModel<readonly number[]> {
+  return (prefix: readonly number[]) => {
     return model(Uint8Array.from(prefix.filter((v) => v <= 255)));
   };
 }
@@ -228,7 +230,7 @@ export function byteOnly(
  * `dist[b]` is the probability of byte/token `b`.
  */
 export type ByteLevelModel = (
-  bytePrefix: Uint8Array,
+  bytePrefix: readonly number[],
   minProb: number,
 ) => Promise<readonly number[]>;
 
@@ -248,7 +250,9 @@ export type ByteLevelModel = (
  *   fromByteLevelModel(passMinProb(m => trieCache(forceCleanUtf8(m)))(predictBytes))
  */
 export function passMinProb(
-  adapt: (model: LanguageModel<Uint8Array>) => LanguageModel<Uint8Array>,
+  adapt: (
+    model: LanguageModel<readonly number[]>,
+  ) => LanguageModel<readonly number[]>,
 ): (inner: ByteLevelModel) => ByteLevelModel {
   return (inner) => {
     let currentMinProb = 0;
@@ -273,8 +277,11 @@ export function passMinProb(
  * All continuation queries at the same depth run in parallel.
  */
 async function* expandMultiByte(
-  model: (prefix: Uint8Array, minProb: number) => Promise<readonly number[]>,
-  bytePrefix: Uint8Array,
+  model: (
+    prefix: readonly number[],
+    minProb: number,
+  ) => Promise<readonly number[]>,
+  bytePrefix: readonly number[],
   partialBytes: number[],
   totalBytes: number,
   probSoFar: number,
@@ -293,7 +300,7 @@ async function* expandMultiByte(
     return;
   }
 
-  const queryPrefix = new Uint8Array([...bytePrefix, ...partialBytes]);
+  const queryPrefix = [...bytePrefix, ...partialBytes];
   const dist = await model(queryPrefix, minProb);
 
   // Single pass: accumulate cumulative positions for ALL non-zero
@@ -336,8 +343,11 @@ async function* expandMultiByte(
  * Returns null if the model assigns zero probability.
  */
 async function lookupSpecificToken(
-  model: (prefix: Uint8Array, minProb: number) => Promise<readonly number[]>,
-  bytePrefix: Uint8Array,
+  model: (
+    prefix: readonly number[],
+    minProb: number,
+  ) => Promise<readonly number[]>,
+  bytePrefix: readonly number[],
   token: WidgetToken,
 ): Promise<TokenCDFExtent<WidgetToken> | null> {
   if (token.type === "special") {
@@ -357,7 +367,7 @@ async function lookupSpecificToken(
   // is bytePrefix + targetBytes[0..i), which is known upfront.
   const dists = await Promise.all(
     targetBytes.map((_, i) =>
-      model(new Uint8Array([...bytePrefix, ...targetBytes.slice(0, i)]), 2),
+      model([...bytePrefix, ...targetBytes.slice(0, i)], 2),
     ),
   );
 
