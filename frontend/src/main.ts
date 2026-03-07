@@ -12,6 +12,7 @@ import {
   fromByteLevelModel,
   interpolate,
   passMinProb,
+  passSpecialTokens,
   trieCache,
 } from "./models";
 import type { ByteLevelModel } from "./models";
@@ -151,10 +152,11 @@ async function main() {
   const model: CDFView<readonly WidgetToken[], WidgetToken> =
     fromByteLevelModel(
       passMinProb((remoteLM) => {
+        const cleanRemote = passSpecialTokens(forceCleanUtf8)(remoteLM);
         return async (prefix) => {
           const mixed = interpolate([
             { model: lstmByteLM, weight: 1 - sliderValue },
-            { model: remoteLM, weight: sliderValue },
+            { model: cleanRemote, weight: sliderValue },
           ]);
           return mixed(prefix);
         };

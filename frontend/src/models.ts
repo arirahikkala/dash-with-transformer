@@ -246,6 +246,63 @@ export function forceCleanUtf8(
 }
 
 /**
+ * Wrap a byte-level adapter (like forceCleanUtf8) so that special tokens
+ * (indices ≥ 256) pass through from the unadapted model. The adapted model's
+ * byte probabilities (0–255) are combined with the unadapted model's special-
+ * token probabilities, then renormalized.
+ *
+ * Special tokens are only included when the prefix is at a UTF-8 character
+ * boundary (i.e. not mid-character).
+ *
+ * Both the adapted and unadapted models are called on every query (cheap
+ * when backed by a shared cache).
+ */
+export function passSpecialTokens(
+  adapt: (
+    model: LanguageModel<readonly number[]>,
+  ) => LanguageModel<readonly number[]>,
+): (
+  model: LanguageModel<readonly number[]>,
+) => LanguageModel<readonly number[]> {
+  return (model) => {
+    const adapted = adapt(model);
+    return async (prefix) => {
+      const [adaptedDist, rawDist] = await Promise.all([
+        adapted(prefix),
+        model(prefix),
+      ]);
+
+      const len = Math.max(adaptedDist.length, rawDist.length);
+      const result = new Array(len).fill(0);
+
+      // Bytes 0–255 from the adapted model
+      let total = 0;
+      for (let i = 0; i < Math.min(256, adaptedDist.length); i++) {
+        result[i] = adaptedDist[i];
+        total += result[i];
+      }
+
+      // Special tokens (≥ 256) from the raw model, only at char boundaries.
+      // Extract the trailing byte-only suffix for the UTF-8 state check.
+      let suffixStart = prefix.length;
+      while (suffixStart > 0 && prefix[suffixStart - 1] <= 255) suffixStart--;
+      const atBoundary = legalUtf8NextByte(prefix.slice(suffixStart))(0);
+
+      if (atBoundary) {
+        for (let i = 256; i < rawDist.length; i++) {
+          result[i] = rawDist[i];
+          total += result[i];
+        }
+      }
+
+      if (total === 0) return result;
+      for (let i = 0; i < len; i++) result[i] /= total;
+      return result;
+    };
+  };
+}
+
+/**
  * Adapt a `LanguageModel<Uint8Array>` into a `LanguageModel<number[]>` by
  * filtering out any prefix elements > 255 (e.g. special-token indices)
  * before forwarding to the inner model as a `Uint8Array`.
