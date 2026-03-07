@@ -224,7 +224,7 @@ async function main() {
   const labelCtx = labelCanvas.getContext("2d")!;
 
   // --- Cursor state ---
-  let cursor: Cursor<WidgetToken> = { prefix: [], x: 0.5, y: 0.5 };
+  let cursor: Cursor<WidgetToken> = { prefix: [], x: 0.8, y: 0.5 };
 
   // --- Mouse state ---
   let mouseDown = false;
