@@ -36,9 +36,20 @@ export interface TokenCDFExtent<T> {
 }
 
 /**
- * A simple language model that returns a plain probability distribution
- * (without cumulative extents or filtering).  Use `adaptModel` (in models.ts) to convert
- * to a full `CDFView`.
+ * Branding infrastructure for language model normalization state.
+ *
+ * A `LanguageModel` is branded as normalized (probabilities sum to 1).
+ * An `UnnormalizedLanguageModel` may have probabilities that don't sum to 1
+ * (e.g. after zeroing out illegal bytes or combining byte + special-token
+ * probabilities).  Use `normalize()` (in models.ts) to convert.
+ */
+declare const __normalized: unique symbol;
+declare const __unnormalized: unique symbol;
+
+type RawModel<P> = (prefix: P) => Promise<readonly number[]>;
+
+/**
+ * A language model whose output distribution sums to 1.
  *
  * Implementations must return the *full* next-token distribution: one entry
  * per token in the model's alphabet, in a fixed canonical order (e.g. byte
@@ -46,7 +57,27 @@ export interface TokenCDFExtent<T> {
  * probability.  Callers may rely on positional indexing: `dist[t]` is the
  * probability of token `t`.
  */
-export type LanguageModel<P> = (prefix: P) => Promise<readonly number[]>;
+export type LanguageModel<P> = RawModel<P> & { readonly [__normalized]: true };
+
+/**
+ * A language model whose output probabilities may not sum to 1.
+ * Must be passed through `normalize()` before use as a `LanguageModel`.
+ */
+export type UnnormalizedLanguageModel<P> = RawModel<P> & {
+  readonly [__unnormalized]: true;
+};
+
+/** Brand a raw distribution function as a normalized LanguageModel. */
+export function asNormalized<P>(fn: RawModel<P>): LanguageModel<P> {
+  return fn as LanguageModel<P>;
+}
+
+/** Brand a raw distribution function as an UnnormalizedLanguageModel. */
+export function asUnnormalized<P>(
+  fn: RawModel<P>,
+): UnnormalizedLanguageModel<P> {
+  return fn as UnnormalizedLanguageModel<P>;
+}
 
 /**
  * Given a prefix and visibility constraints, finds the matching entries from the next-token distribution.

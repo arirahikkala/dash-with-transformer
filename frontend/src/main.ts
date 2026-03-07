@@ -1,9 +1,10 @@
-import type {
-  Cursor,
-  CDFView,
-  WidgetToken,
-  SpecialToken,
-  LanguageModel,
+import {
+  type Cursor,
+  type CDFView,
+  type WidgetToken,
+  type SpecialToken,
+  type LanguageModel,
+  asNormalized,
 } from "./types";
 import { createBackendClient, fetchSpecialTokens } from "./remote/backend";
 import {
@@ -11,6 +12,7 @@ import {
   forceCleanUtf8,
   fromByteLevelModel,
   interpolate,
+  normalize,
   passMinProb,
   passSpecialTokens,
   trieCache,
@@ -108,7 +110,7 @@ async function main() {
   );
   statusEl.style.display = "none";
   const lstmByteLM: LanguageModel<readonly number[]> = trieCache(
-    forceCleanUtf8(byteOnly(lstmPredict)),
+    normalize(forceCleanUtf8(byteOnly(asNormalized(lstmPredict)))),
   );
 
   // --- Remote side ---
@@ -152,14 +154,16 @@ async function main() {
   const model: CDFView<readonly WidgetToken[], WidgetToken> =
     fromByteLevelModel(
       passMinProb((remoteLM) => {
-        const cleanRemote = passSpecialTokens(forceCleanUtf8)(remoteLM);
-        return async (prefix) => {
+        const cleanRemote = normalize(
+          passSpecialTokens(forceCleanUtf8)(remoteLM),
+        );
+        return asNormalized(async (prefix) => {
           const mixed = interpolate([
             { model: lstmByteLM, weight: 1 - sliderValue },
             { model: cleanRemote, weight: sliderValue },
           ]);
           return mixed(prefix);
-        };
+        });
       })((prefix, minProb) => remoteBLM(prefix, minProb)),
       specialTokens,
     );

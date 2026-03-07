@@ -6,7 +6,12 @@ import {
   interpolate,
   type ByteLevelModel,
 } from "./models";
-import type { LanguageModel, SpecialToken, UnicodeCodepoint } from "./types";
+import {
+  type LanguageModel,
+  type SpecialToken,
+  type UnicodeCodepoint,
+  asNormalized,
+} from "./types";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -861,7 +866,7 @@ describe("specificToken lookup", () => {
 describe("interpolate", () => {
   /** Create a LanguageModel that always returns the given distribution. */
   function simpleModel(dist: number[]): LanguageModel<string> {
-    return async () => dist;
+    return asNormalized(async () => dist);
   }
 
   it("computes correct mixture probabilities", async () => {
@@ -906,10 +911,10 @@ describe("interpolate", () => {
   it("weight=0 model is not queried", async () => {
     let called = false;
     const a = simpleModel([0, 0.6, 0.4]);
-    const b: LanguageModel<string> = async () => {
+    const b: LanguageModel<string> = asNormalized(async () => {
       called = true;
       return [0, 0.1, 0.9];
-    };
+    });
 
     const mixed = interpolate([
       { model: a, weight: 1 },
@@ -956,15 +961,14 @@ describe("interpolate", () => {
     let activeCalls = 0;
     let maxConcurrency = 0;
 
-    const makeSlowModel =
-      (dist: number[]): LanguageModel<string> =>
-      async () => {
+    const makeSlowModel = (dist: number[]): LanguageModel<string> =>
+      asNormalized(async () => {
         activeCalls++;
         maxConcurrency = Math.max(maxConcurrency, activeCalls);
         await new Promise((resolve) => setTimeout(resolve, 10));
         activeCalls--;
         return dist;
-      };
+      });
 
     const a = makeSlowModel([0, 0.5, 0.5]);
     const b = makeSlowModel([0, 0.5, 0.5]);
@@ -1010,15 +1014,15 @@ describe("forceCleanUtf8", () => {
   function makePlainModel(
     table: Record<string, Record<number, number>>,
   ): LanguageModel<readonly number[]> {
-    return async (prefix: readonly number[]) => {
+    return asNormalized(async (prefix: readonly number[]) => {
       const key = prefixKey(prefix);
       const sparse = table[key];
       if (!sparse) throw new Error(`Unexpected prefix: "${key}"`);
       return makeDist(sparse);
-    };
+    });
   }
 
-  it("filters out continuation bytes at a character boundary and renormalises", async () => {
+  it("zeroes out continuation bytes at a character boundary (unnormalized)", async () => {
     const model = makePlainModel({
       "": {
         0x61: 0.5, // 'a' — legal lead
@@ -1029,12 +1033,12 @@ describe("forceCleanUtf8", () => {
     const dist = await forceCleanUtf8(model)([]);
 
     expect(dist).toHaveLength(256);
-    expect(dist[0x61]).toBeCloseTo(2 / 3);
+    expect(dist[0x61]).toBeCloseTo(0.5);
     expect(dist[0x80]).toBe(0);
-    expect(dist[0xc3]).toBeCloseTo(1 / 3);
+    expect(dist[0xc3]).toBeCloseTo(0.25);
   });
 
-  it("filters out lead bytes when a continuation byte is expected", async () => {
+  it("zeroes out lead bytes when a continuation byte is expected (unnormalized)", async () => {
     // Prefix [0xC3] → mid-2-byte-sequence, need one continuation
     const model = makePlainModel({
       c3: {
@@ -1046,7 +1050,7 @@ describe("forceCleanUtf8", () => {
     const dist = await forceCleanUtf8(model)([0xc3]);
 
     expect(dist).toHaveLength(256);
-    expect(dist[0xa9]).toBeCloseTo(1.0);
+    expect(dist[0xa9]).toBeCloseTo(0.5);
     expect(dist[0x61]).toBe(0);
     expect(dist[0xc3]).toBe(0);
   });
@@ -1062,7 +1066,7 @@ describe("forceCleanUtf8", () => {
 
     expect(dist).toHaveLength(256);
     expect(dist[0x80]).toBe(0);
-    expect(dist[0xa0]).toBeCloseTo(1.0);
+    expect(dist[0xa0]).toBeCloseTo(0.5);
   });
 
   it("enforces restricted range after F0 and F4", async () => {
@@ -1076,7 +1080,7 @@ describe("forceCleanUtf8", () => {
     const f0Dist = await forceCleanUtf8(f0Model)([0xf0]);
     expect(f0Dist).toHaveLength(256);
     expect(f0Dist[0x80]).toBe(0);
-    expect(f0Dist[0x90]).toBeCloseTo(1.0);
+    expect(f0Dist[0x90]).toBeCloseTo(0.5);
 
     // After F4: first continuation must be 0x80–0x8F
     const f4Model = makePlainModel({
@@ -1087,7 +1091,7 @@ describe("forceCleanUtf8", () => {
     });
     const f4Dist = await forceCleanUtf8(f4Model)([0xf4]);
     expect(f4Dist).toHaveLength(256);
-    expect(f4Dist[0x80]).toBeCloseTo(1.0);
+    expect(f4Dist[0x80]).toBeCloseTo(0.5);
     expect(f4Dist[0x90]).toBe(0);
   });
 
@@ -1118,9 +1122,9 @@ describe("forceCleanUtf8", () => {
     const dist = await forceCleanUtf8(model)([0xe4, 0xb8]);
 
     expect(dist).toHaveLength(256);
-    expect(dist[0x80]).toBeCloseTo(1 / 3);
-    expect(dist[0xad]).toBeCloseTo(1 / 3);
-    expect(dist[0xbf]).toBeCloseTo(1 / 3);
+    expect(dist[0x80]).toBeCloseTo(0.25);
+    expect(dist[0xad]).toBeCloseTo(0.25);
+    expect(dist[0xbf]).toBeCloseTo(0.25);
     expect(dist[0x61]).toBe(0);
   });
 });
@@ -1128,10 +1132,10 @@ describe("forceCleanUtf8", () => {
 describe("byteOnly", () => {
   it("passes through byte-only prefixes unchanged", async () => {
     const calls: number[][] = [];
-    const inner: LanguageModel<Uint8Array> = async (prefix) => {
+    const inner: LanguageModel<Uint8Array> = asNormalized(async (prefix) => {
       calls.push(Array.from(prefix));
       return [0.5, 0.5];
-    };
+    });
     const adapted = byteOnly(inner);
     await adapted([0x41, 0x42]);
     expect(calls).toEqual([[0x41, 0x42]]);
@@ -1139,17 +1143,19 @@ describe("byteOnly", () => {
 
   it("strips values > 255 from the prefix", async () => {
     const calls: number[][] = [];
-    const inner: LanguageModel<Uint8Array> = async (prefix) => {
+    const inner: LanguageModel<Uint8Array> = asNormalized(async (prefix) => {
       calls.push(Array.from(prefix));
       return [1.0];
-    };
+    });
     const adapted = byteOnly(inner);
     await adapted([0x41, 256, 0x42, 1000]);
     expect(calls).toEqual([[0x41, 0x42]]);
   });
 
   it("forwards the distribution from the inner model", async () => {
-    const inner: LanguageModel<Uint8Array> = async () => [0.3, 0.7];
+    const inner: LanguageModel<Uint8Array> = asNormalized(async () => [
+      0.3, 0.7,
+    ]);
     const dist = await byteOnly(inner)([300, 0x61]);
     expect(dist).toEqual([0.3, 0.7]);
   });

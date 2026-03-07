@@ -7,10 +7,13 @@ import { createTrieCache } from "./trie-cache";
 import {
   type CDFView,
   type LanguageModel,
+  type UnnormalizedLanguageModel,
   type SpecialToken,
   type TokenCDFExtent,
   type UnicodeCodepoint,
   type WidgetToken,
+  asNormalized,
+  asUnnormalized,
 } from "./types";
 
 /**
@@ -198,7 +201,7 @@ export function interpolate<P>(
   const weights = active.map((c) => c.weight / totalWeight);
   const models = active.map((c) => c.model);
 
-  return async (prefix) => {
+  return asNormalized(async (prefix) => {
     const dists = await Promise.all(models.map((m) => m(prefix)));
     const len = Math.max(...dists.map((d) => d.length));
     const result = new Array(len).fill(0);
@@ -209,7 +212,7 @@ export function interpolate<P>(
       }
     }
     return result;
-  };
+  });
 }
 
 /**
@@ -221,35 +224,32 @@ export function trieCache<P extends Iterable<number>>(
   model: LanguageModel<P>,
 ): LanguageModel<P> {
   const cache = createTrieCache<Promise<readonly number[]>>();
-  return (prefix: P) => cache.getOrSet(prefix, () => model(prefix));
+  return asNormalized((prefix: P) =>
+    cache.getOrSet(prefix, () => model(prefix)),
+  );
 }
 
 /**
  * Wrap a byte-level model to zero out any next-byte predictions that
- * would violate UTF-8 encoding rules, and renormalise the distribution.
+ * would violate UTF-8 encoding rules.  The result is unnormalized;
+ * call `normalize()` to get a proper distribution.
  */
 export function forceCleanUtf8(
   model: LanguageModel<readonly number[]>,
-): LanguageModel<readonly number[]> {
-  return async (prefix: readonly number[]) => {
+): UnnormalizedLanguageModel<readonly number[]> {
+  return asUnnormalized(async (prefix: readonly number[]) => {
     const dist = await model(prefix);
     const isLegal = legalUtf8NextByte(prefix);
-
-    let total = 0;
-    for (let b = 0; b < dist.length; b++) {
-      if (isLegal(b)) total += dist[b];
-    }
-    if (total === 0) return dist.map(() => 0);
-
-    return dist.map((p, b) => (isLegal(b) ? p / total : 0));
-  };
+    return dist.map((p, b) => (isLegal(b) ? p : 0));
+  });
 }
 
 /**
  * Wrap a byte-level adapter (like forceCleanUtf8) so that special tokens
  * (indices ≥ 256) pass through from the unadapted model. The adapted model's
  * byte probabilities (0–255) are combined with the unadapted model's special-
- * token probabilities, then renormalized.
+ * token probabilities.  The result is unnormalized; call `normalize()` to
+ * get a proper distribution.
  *
  * Special tokens are only included when the prefix is at a UTF-8 character
  * boundary (i.e. not mid-character).
@@ -260,13 +260,13 @@ export function forceCleanUtf8(
 export function passSpecialTokens(
   adapt: (
     model: LanguageModel<readonly number[]>,
-  ) => LanguageModel<readonly number[]>,
+  ) => UnnormalizedLanguageModel<readonly number[]>,
 ): (
   model: LanguageModel<readonly number[]>,
-) => LanguageModel<readonly number[]> {
+) => UnnormalizedLanguageModel<readonly number[]> {
   return (model) => {
     const adapted = adapt(model);
-    return async (prefix) => {
+    return asUnnormalized(async (prefix: readonly number[]) => {
       const [adaptedDist, rawDist] = await Promise.all([
         adapted(prefix),
         model(prefix),
@@ -276,10 +276,8 @@ export function passSpecialTokens(
       const result = new Array(len).fill(0);
 
       // Bytes 0–255 from the adapted model
-      let total = 0;
       for (let i = 0; i < Math.min(256, adaptedDist.length); i++) {
         result[i] = adaptedDist[i];
-        total += result[i];
       }
 
       // Special tokens (≥ 256) from the raw model, only at char boundaries.
@@ -291,15 +289,27 @@ export function passSpecialTokens(
       if (atBoundary) {
         for (let i = 256; i < rawDist.length; i++) {
           result[i] = rawDist[i];
-          total += result[i];
         }
       }
 
-      if (total === 0) return result;
-      for (let i = 0; i < len; i++) result[i] /= total;
       return result;
-    };
+    });
   };
+}
+
+/**
+ * Normalize an unnormalized language model so its output sums to 1.
+ */
+export function normalize(
+  model: UnnormalizedLanguageModel<readonly number[]>,
+): LanguageModel<readonly number[]> {
+  return asNormalized(async (prefix: readonly number[]) => {
+    const dist = await model(prefix);
+    let total = 0;
+    for (let i = 0; i < dist.length; i++) total += dist[i];
+    if (total === 0) return dist;
+    return dist.map((p) => p / total);
+  });
 }
 
 /**
@@ -310,9 +320,9 @@ export function passSpecialTokens(
 export function byteOnly(
   model: LanguageModel<Uint8Array>,
 ): LanguageModel<readonly number[]> {
-  return (prefix: readonly number[]) => {
+  return asNormalized((prefix: readonly number[]) => {
     return model(Uint8Array.from(prefix.filter((v) => v <= 255)));
-  };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -352,7 +362,9 @@ export function passMinProb(
 ): (inner: ByteLevelModel) => ByteLevelModel {
   return (inner) => {
     let currentMinProb = 0;
-    const adapted = adapt(async (prefix) => inner(prefix, currentMinProb));
+    const adapted = adapt(
+      asNormalized(async (prefix) => inner(prefix, currentMinProb)),
+    );
     return async (prefix, minProb) => {
       currentMinProb = minProb;
       return adapted(prefix);

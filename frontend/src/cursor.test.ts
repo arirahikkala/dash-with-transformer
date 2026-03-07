@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import type { CDFView, Cursor, TokenCDFExtent } from "./types";
+import {
+  type CDFView,
+  type Cursor,
+  type TokenCDFExtent,
+  asNormalized,
+} from "./types";
 import { normalizeCursor } from "./cursor";
 import { first } from "./async-iterables";
 import { adaptModel } from "./models";
@@ -24,26 +29,36 @@ const B = 1;
 const Y = 1;
 
 /** Uniform binary: A and B each with probability 0.5. */
-const binary = adaptModel<readonly number[]>(async () => [0.5, 0.5]);
+const binary = adaptModel<readonly number[]>(
+  asNormalized(async () => [0.5, 0.5]),
+);
 
 /** Asymmetric binary: A = 0.8, B = 0.2. */
-const asym = adaptModel<readonly number[]>(async () => [0.8, 0.2]);
+const asym = adaptModel<readonly number[]>(
+  asNormalized(async () => [0.8, 0.2]),
+);
 
 /** Three tokens. */
-const ternary = adaptModel<readonly number[]>(async () => [0.2, 0.5, 0.3]);
+const ternary = adaptModel<readonly number[]>(
+  asNormalized(async () => [0.2, 0.5, 0.3]),
+);
 
 /** Context-sensitive: distribution depends on the last token. */
-const contextual = adaptModel<readonly number[]>(async (prefix) => {
-  if (prefix.length === 0) return [0.6, 0.4];
-  if (prefix[prefix.length - 1] === A) return [0.3, 0.7];
-  return [0.5, 0.5];
-});
+const contextual = adaptModel<readonly number[]>(
+  asNormalized(async (prefix) => {
+    if (prefix.length === 0) return [0.6, 0.4];
+    if (prefix[prefix.length - 1] === A) return [0.3, 0.7];
+    return [0.5, 0.5];
+  }),
+);
 
 /** Deterministic: single token with probability 1. */
-const deterministic = adaptModel<readonly number[]>(async () => [1.0]);
+const deterministic = adaptModel<readonly number[]>(
+  asNormalized(async () => [1.0]),
+);
 
 /** Empty distribution — no continuations. */
-const empty = adaptModel<readonly number[]>(async () => []);
+const empty = adaptModel<readonly number[]>(asNormalized(async () => []));
 
 // ---------------------------------------------------------------------------
 // cursorToGlobal — test-only helper
@@ -422,7 +437,9 @@ describe("normalizeCursor", () => {
 
   describe("generic token types", () => {
     it("works with numeric tokens", async () => {
-      const numModel = adaptModel<readonly number[]>(async () => [0.4, 0.6]);
+      const numModel = adaptModel<readonly number[]>(
+        asNormalized(async () => [0.4, 0.6]),
+      );
       // Token 0: x∈[0.6,1] y∈[0,0.4).  Token 1: x∈[0.4,1] y∈[0.4,1).
       // (0.5, 0.5): token 0 x≥0.6? no.  token 1 x≥0.4 and y∈[0.4,1)? yes.
       const r = nn(

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { Cursor, SceneNode, Scene } from "./types";
+import { type Cursor, type SceneNode, type Scene, asNormalized } from "./types";
 import { adaptModel } from "./models";
 import { buildScene } from "./scene";
 
@@ -15,19 +15,27 @@ const Y = 1;
 const Z = 2;
 
 /** Uniform binary: A and B each with probability 0.5. */
-const binary = adaptModel<readonly number[]>(async () => [0.5, 0.5]);
+const binary = adaptModel<readonly number[]>(
+  asNormalized(async () => [0.5, 0.5]),
+);
 
 /** Asymmetric binary: A = 0.8, B = 0.2. */
-const asym = adaptModel<readonly number[]>(async () => [0.8, 0.2]);
+const asym = adaptModel<readonly number[]>(
+  asNormalized(async () => [0.8, 0.2]),
+);
 
 /** Three tokens. */
-const ternary = adaptModel<readonly number[]>(async () => [0.2, 0.5, 0.3]);
+const ternary = adaptModel<readonly number[]>(
+  asNormalized(async () => [0.2, 0.5, 0.3]),
+);
 
 /** Deterministic: single token with probability 1. */
-const deterministic = adaptModel<readonly number[]>(async () => [1.0]);
+const deterministic = adaptModel<readonly number[]>(
+  asNormalized(async () => [1.0]),
+);
 
 /** Empty distribution — no continuations. */
-const empty = adaptModel<readonly number[]>(async () => []);
+const empty = adaptModel<readonly number[]>(asNormalized(async () => []));
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -341,7 +349,9 @@ describe("buildScene", () => {
     });
 
     it("works with numeric token types", async () => {
-      const numModel = adaptModel<readonly number[]>(async () => [0.4, 0.6]);
+      const numModel = adaptModel<readonly number[]>(
+        asNormalized(async () => [0.4, 0.6]),
+      );
       const cursor: Cursor<number> = { prefix: [], x: 0, y: 0.5 };
       const scene = await buildScene(numModel, cursor, 0.01);
       const children = await collect(scene.children);
