@@ -80,7 +80,6 @@ function renderNodeLabel(
   side: number,
   height: number,
   labelExtents: LabelExtent[],
-  parentExtent: LabelExtent | null,
 ): LabelExtent | null {
   if (side < 10) return null;
 
@@ -117,6 +116,7 @@ function renderNodeLabel(
 
   // S-spline from parent label to this label when child doesn't
   // vertically overlap parent and is left enough to warrant a connector
+  const parentExtent = labelExtents[labelExtents.length - 1] ?? null;
   if (
     parentExtent &&
     !(ly0 < parentExtent.y1 && ly1 > parentExtent.y0) &&
@@ -133,14 +133,7 @@ function renderNodeLabel(
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(startX, startY);
-    ctx.bezierCurveTo(
-      startX + bulge,
-      startY,
-      endX - bulge,
-      endY,
-      endX,
-      endY,
-    );
+    ctx.bezierCurveTo(startX + bulge, startY, endX - bulge, endY, endX, endY);
     ctx.stroke();
   }
 
@@ -158,7 +151,6 @@ async function renderNodes(
   height: number,
   signal: AbortSignal,
   labelExtents: LabelExtent[],
-  parentExtent: LabelExtent | null,
   depth: number,
 ): Promise<void> {
   for await (const node of nodes) {
@@ -171,16 +163,28 @@ async function renderNodes(
     renderNodeRect(nodeCtx, node.token, x0, py0, side, nodeWidth, depth);
 
     const thisExtent = renderNodeLabel(
-      labelCtx, node.token, x0, py0, py1, side, height,
-      labelExtents, parentExtent,
+      labelCtx,
+      node.token,
+      x0,
+      py0,
+      py1,
+      side,
+      height,
+      labelExtents,
     );
     const childExtents = thisExtent
       ? [...labelExtents, thisExtent]
       : labelExtents;
 
     renderNodes(
-      nodeCtx, labelCtx, node.children, nodeWidth, height, signal,
-      childExtents, thisExtent ?? parentExtent, depth + 1,
+      nodeCtx,
+      labelCtx,
+      node.children,
+      nodeWidth,
+      height,
+      signal,
+      childExtents,
+      depth + 1,
     );
   }
 }
@@ -209,7 +213,6 @@ export async function renderScene(
     height,
     signal,
     [],
-    null,
     scene.prefixLength,
   );
 }
