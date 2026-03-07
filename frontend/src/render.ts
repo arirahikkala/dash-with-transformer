@@ -46,6 +46,109 @@ function color(token: WidgetToken, depth: number): string {
   return `hsl(50, 90%, 45%)`;
 }
 
+/** Render a node's colored square and top border to the node canvas. */
+function renderNodeRect(
+  ctx: CanvasRenderingContext2D,
+  token: WidgetToken,
+  x0: number,
+  py0: number,
+  side: number,
+  nodeWidth: number,
+  depth: number,
+): void {
+  ctx.fillStyle = color(token, depth);
+  ctx.fillRect(x0, py0, side, side);
+
+  ctx.strokeStyle = "rgba(0,0,0,0.1)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x0, py0);
+  ctx.lineTo(nodeWidth, py0);
+  ctx.stroke();
+}
+
+/**
+ * Render a node's label (and optional connector spline) to the label canvas.
+ * Returns the new extent for this label, or null if the node was too small to label.
+ */
+function renderNodeLabel(
+  ctx: CanvasRenderingContext2D,
+  token: WidgetToken,
+  x0: number,
+  py0: number,
+  py1: number,
+  side: number,
+  height: number,
+  labelExtents: LabelExtent[],
+  parentExtent: LabelExtent | null,
+): LabelExtent | null {
+  if (side < 10) return null;
+
+  const fontSize = Math.min(Math.max(side * 0.7, 10), 28);
+  ctx.font = `${fontSize}px monospace`;
+  ctx.fillStyle = "#000";
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "left";
+  const labelText = label(token);
+  const textWidth = ctx.measureText(labelText).width;
+  const pad = 4;
+  const halfFont = fontSize / 2;
+  const centerY = py0 + side / 2;
+  // Clamp to screen, then clamp to node (node bounds always win)
+  const screenClamped = Math.max(
+    pad + halfFont,
+    Math.min(height - pad - halfFont, centerY),
+  );
+  const labelY = Math.max(
+    py0 + halfFont + pad,
+    Math.min(py1 - halfFont - pad, screenClamped),
+  );
+  const ly0 = labelY - halfFont;
+  const ly1 = labelY + halfFont;
+
+  // Push labelX as far left as possible while staying in node bounds
+  // and not overlapping any ancestor label extent
+  let labelX = x0 + 4;
+  for (const ext of labelExtents) {
+    if (ly0 < ext.y1 && ly1 > ext.y0) {
+      labelX = Math.max(labelX, ext.x1);
+    }
+  }
+
+  // S-spline from parent label to this label when child doesn't
+  // vertically overlap parent and is left enough to warrant a connector
+  if (
+    parentExtent &&
+    !(ly0 < parentExtent.y1 && ly1 > parentExtent.y0) &&
+    labelX < parentExtent.x0 + 50
+  ) {
+    const startX = parentExtent.x0;
+    const startY = (parentExtent.y0 + parentExtent.y1) / 2;
+    const endX = labelX + textWidth;
+    const endY = labelY;
+    const bulge = 200;
+    const dist = parentExtent.x0 - labelX;
+    const alpha = 0.25 * Math.min(1, dist / 50);
+    ctx.strokeStyle = `rgba(0,0,0,${alpha})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(startX, startY);
+    ctx.bezierCurveTo(
+      startX + bulge,
+      startY,
+      endX - bulge,
+      endY,
+      endX,
+      endY,
+    );
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = "#000";
+  ctx.fillText(labelText, labelX, labelY);
+  return { x0: labelX, x1: labelX + textWidth + 1, y0: ly0, y1: ly1 };
+}
+
 /** Render nodes as right-aligned squares, parent first then children on top. */
 async function renderNodes(
   nodeCtx: CanvasRenderingContext2D,
@@ -65,100 +168,19 @@ async function renderNodes(
     const side = py1 - py0;
     const x0 = nodeWidth - side;
 
-    // Colored square, right-aligned (node canvas)
-    nodeCtx.fillStyle = color(node.token, depth);
-    nodeCtx.fillRect(x0, py0, side, side);
+    renderNodeRect(nodeCtx, node.token, x0, py0, side, nodeWidth, depth);
 
-    // Subtle border at the top (node canvas)
-    nodeCtx.strokeStyle = "rgba(0,0,0,0.1)";
-    nodeCtx.lineWidth = 1;
-    nodeCtx.beginPath();
-    nodeCtx.moveTo(x0, py0);
-    nodeCtx.lineTo(nodeWidth, py0);
-    nodeCtx.stroke();
+    const thisExtent = renderNodeLabel(
+      labelCtx, node.token, x0, py0, py1, side, height,
+      labelExtents, parentExtent,
+    );
+    const childExtents = thisExtent
+      ? [...labelExtents, thisExtent]
+      : labelExtents;
 
-    // Label on label canvas, pushed right only where ancestors vertically overlap
-    let childExtents = labelExtents;
-    let thisExtent: LabelExtent | null = parentExtent;
-    if (side >= 10) {
-      const fontSize = Math.min(Math.max(side * 0.7, 10), 28);
-      labelCtx.font = `${fontSize}px monospace`;
-      labelCtx.fillStyle = "#000";
-      labelCtx.textBaseline = "middle";
-      labelCtx.textAlign = "left";
-      const labelText = label(node.token);
-      const textWidth = labelCtx.measureText(labelText).width;
-      const pad = 4;
-      const halfFont = fontSize / 2;
-      const centerY = py0 + side / 2;
-      // Clamp to screen, then clamp to node (node bounds always win)
-      const screenClamped = Math.max(
-        pad + halfFont,
-        Math.min(height - pad - halfFont, centerY),
-      );
-      const labelY = Math.max(
-        py0 + halfFont + pad,
-        Math.min(py1 - halfFont - pad, screenClamped),
-      );
-      const ly0 = labelY - halfFont;
-      const ly1 = labelY + halfFont;
-
-      // Push labelX as far left as possible while staying in node bounds
-      // and not overlapping any ancestor label extent
-      let labelX = x0 + 4;
-      for (const ext of labelExtents) {
-        // Check vertical overlap
-        if (ly0 < ext.y1 && ly1 > ext.y0) {
-          labelX = Math.max(labelX, ext.x1);
-        }
-      }
-
-      // S-spline from parent label to this label when child doesn't
-      // vertically overlap parent and is left enough to warrant a connector
-      if (
-        parentExtent &&
-        !(ly0 < parentExtent.y1 && ly1 > parentExtent.y0) &&
-        labelX < parentExtent.x0 + 50
-      ) {
-        const startX = parentExtent.x0;
-        const startY = (parentExtent.y0 + parentExtent.y1) / 2;
-        const endX = labelX + textWidth;
-        const endY = labelY;
-        const bulge = 200;
-        const dist = parentExtent.x0 - labelX;
-        const alpha = 0.25 * Math.min(1, dist / 50);
-        labelCtx.strokeStyle = `rgba(0,0,0,${alpha})`;
-        labelCtx.lineWidth = 1;
-        labelCtx.beginPath();
-        labelCtx.moveTo(startX, startY);
-        labelCtx.bezierCurveTo(
-          startX + bulge,
-          startY,
-          endX - bulge,
-          endY,
-          endX,
-          endY,
-        );
-        labelCtx.stroke();
-      }
-
-      labelCtx.fillStyle = "#000";
-      labelCtx.fillText(labelText, labelX, labelY);
-      thisExtent = { x0: labelX, x1: labelX + textWidth + 1, y0: ly0, y1: ly1 };
-      childExtents = [...labelExtents, thisExtent];
-    }
-
-    // Children paint on top (smaller squares nested inside)
     renderNodes(
-      nodeCtx,
-      labelCtx,
-      node.children,
-      nodeWidth,
-      height,
-      signal,
-      childExtents,
-      thisExtent,
-      depth + 1,
+      nodeCtx, labelCtx, node.children, nodeWidth, height, signal,
+      childExtents, thisExtent ?? parentExtent, depth + 1,
     );
   }
 }
