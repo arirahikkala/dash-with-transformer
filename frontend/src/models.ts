@@ -21,32 +21,36 @@ import {
  * that computes cumulative extents and handles range/size filtering.
  */
 export function adaptModel<P>(inner: LanguageModel<P>): CDFView<P, number> {
-  return async function* (
-    prefix,
-    rangeStart,
-    rangeEnd,
-    minProb,
-    specificToken,
-  ) {
-    const dist = await inner(prefix);
-    let cum = 0;
-    for (let token = 0; token < dist.length; token++) {
-      const probability = dist[token];
-      if (probability === 0) continue;
-      const start = cum;
-      const end = cum + probability;
-      cum = end;
-      if (specificToken !== undefined) {
-        if (token === specificToken) {
-          yield { token, start, end };
-          return;
-        }
-        continue;
+  return {
+    async *slice(prefix, rangeStart, rangeEnd, minProb) {
+      const dist = await inner(prefix);
+      let cum = 0;
+      for (let token = 0; token < dist.length; token++) {
+        const probability = dist[token];
+        if (probability === 0) continue;
+        const start = cum;
+        const end = cum + probability;
+        cum = end;
+        if (end <= rangeStart || start > rangeEnd) continue;
+        if (probability < minProb) continue;
+        yield { token, start, end };
       }
-      if (end <= rangeStart || start > rangeEnd) continue;
-      if (probability < minProb) continue;
-      yield { token, start, end };
-    }
+    },
+    async token(prefix, specificToken) {
+      const dist = await inner(prefix);
+      let cum = 0;
+      for (let token = 0; token < dist.length; token++) {
+        const probability = dist[token];
+        if (probability === 0) continue;
+        const start = cum;
+        const end = cum + probability;
+        cum = end;
+        if (token === specificToken) {
+          return { token, start, end };
+        }
+      }
+      return null;
+    },
   };
 }
 
@@ -532,96 +536,94 @@ export function fromByteLevelModel(
   byteLevelModel: ByteLevelModel,
   specialTokens: SpecialToken[],
 ): CDFView<readonly WidgetToken[], WidgetToken> {
-  return async function* (
-    prefix: readonly WidgetToken[],
-    rangeStart: number,
-    rangeEnd: number,
-    minProb: number,
-    specificToken?: WidgetToken,
-  ) {
-    const bytePrefix = widgetPrefixToBytes(prefix);
+  return {
+    async *slice(
+      prefix: readonly WidgetToken[],
+      rangeStart: number,
+      rangeEnd: number,
+      minProb: number,
+    ) {
+      const bytePrefix = widgetPrefixToBytes(prefix);
 
-    // Fast path: look up a single token's extent.
-    if (specificToken !== undefined) {
-      const result = await lookupSpecificToken(
-        byteLevelModel,
-        bytePrefix,
-        specificToken,
-      );
-      if (result) yield result;
-      return;
-    }
+      // 1. First-byte distribution (1 model call).
+      const firstByteDist = await byteLevelModel(bytePrefix, minProb);
 
-    // 1. First-byte distribution (1 model call).
-    const firstByteDist = await byteLevelModel(bytePrefix, minProb);
-
-    // 2. Cumulative start position for every entry in the distribution
-    //    (bytes 0–255 plus any special tokens at indices ≥ 256).
-    const firstByteCumStart: number[] = new Array(firstByteDist.length);
-    let cum = 0;
-    for (let b = 0; b < firstByteDist.length; b++) {
-      firstByteCumStart[b] = cum;
-      if (firstByteDist[b] > 0) {
-        cum += firstByteDist[b];
+      // 2. Cumulative start position for every entry in the distribution
+      //    (bytes 0–255 plus any special tokens at indices ≥ 256).
+      const firstByteCumStart: number[] = new Array(firstByteDist.length);
+      let cum = 0;
+      for (let b = 0; b < firstByteDist.length; b++) {
+        firstByteCumStart[b] = cum;
+        if (firstByteDist[b] > 0) {
+          cum += firstByteDist[b];
+        }
       }
-    }
 
-    // 3. Single-byte codepoints (0x00–0x7F): yield directly.
-    for (let b = 0; b <= 0x7f; b++) {
-      if (firstByteDist[b] === 0) continue;
-      const start = firstByteCumStart[b];
-      const end = firstByteCumStart[b] + firstByteDist[b];
-      if (end <= rangeStart || start > rangeEnd) continue;
-      if (end - start < minProb) continue;
-      const token: UnicodeCodepoint = { type: "codepoint", codepoint: b };
-      yield { token, start, end };
-    }
+      // 3. Single-byte codepoints (0x00–0x7F): yield directly.
+      for (let b = 0; b <= 0x7f; b++) {
+        if (firstByteDist[b] === 0) continue;
+        const start = firstByteCumStart[b];
+        const end = firstByteCumStart[b] + firstByteDist[b];
+        if (end <= rangeStart || start > rangeEnd) continue;
+        if (end - start < minProb) continue;
+        const token: UnicodeCodepoint = { type: "codepoint", codepoint: b };
+        yield { token, start, end };
+      }
 
-    // 4. Multi-byte groups: expand in parallel, yield as each resolves.
-    const expansions: AsyncIterable<TokenCDFExtent<WidgetToken>>[] = [];
+      // 4. Multi-byte groups: expand in parallel, yield as each resolves.
+      const expansions: AsyncIterable<TokenCDFExtent<WidgetToken>>[] = [];
 
-    for (let b = 0xc0; b <= 0xff; b++) {
-      if (firstByteDist[b] === 0) continue;
-      const totalBytes = utf8SeqLength(b);
-      if (totalBytes === 0) continue; // invalid lead byte
+      for (let b = 0xc0; b <= 0xff; b++) {
+        if (firstByteDist[b] === 0) continue;
+        const totalBytes = utf8SeqLength(b);
+        if (totalBytes === 0) continue; // invalid lead byte
 
-      const groupEnd = firstByteCumStart[b] + firstByteDist[b];
+        const groupEnd = firstByteCumStart[b] + firstByteDist[b];
 
-      // Skip groups entirely outside the visible range.
-      if (groupEnd <= rangeStart || firstByteCumStart[b] > rangeEnd) continue;
-      // Skip groups where every codepoint is below minProb.
-      if (firstByteDist[b] < minProb) continue;
+        // Skip groups entirely outside the visible range.
+        if (groupEnd <= rangeStart || firstByteCumStart[b] > rangeEnd) continue;
+        // Skip groups where every codepoint is below minProb.
+        if (firstByteDist[b] < minProb) continue;
 
-      expansions.push(
-        expandMultiByte(
-          byteLevelModel,
-          bytePrefix,
-          [b],
-          totalBytes,
-          firstByteDist[b],
-          firstByteCumStart[b],
-          rangeStart,
-          rangeEnd,
-          minProb,
-        ),
-      );
-    }
+        expansions.push(
+          expandMultiByte(
+            byteLevelModel,
+            bytePrefix,
+            [b],
+            totalBytes,
+            firstByteDist[b],
+            firstByteCumStart[b],
+            rangeStart,
+            rangeEnd,
+            minProb,
+          ),
+        );
+      }
 
-    // 5. Special tokens (indices ≥ 256): yield directly.
-    for (const st of specialTokens) {
-      if (st.index >= firstByteDist.length) continue;
-      if (firstByteDist[st.index] === 0) continue;
-      const start = firstByteCumStart[st.index];
-      const end = start + firstByteDist[st.index];
-      if (end <= rangeStart || start > rangeEnd) continue;
-      if (end - start < minProb) continue;
-      expansions.push(
-        (async function* () {
-          yield { token: st as WidgetToken, start, end };
-        })(),
-      );
-    }
+      // 5. Special tokens (indices ≥ 256): yield directly.
+      for (const st of specialTokens) {
+        if (st.index >= firstByteDist.length) continue;
+        if (firstByteDist[st.index] === 0) continue;
+        const start = firstByteCumStart[st.index];
+        const end = start + firstByteDist[st.index];
+        if (end <= rangeStart || start > rangeEnd) continue;
+        if (end - start < minProb) continue;
+        expansions.push(
+          (async function* () {
+            yield { token: st as WidgetToken, start, end };
+          })(),
+        );
+      }
 
-    yield* mergeAsyncIterables(expansions);
+      yield* mergeAsyncIterables(expansions);
+    },
+
+    async token(
+      prefix: readonly WidgetToken[],
+      specificToken: WidgetToken,
+    ): Promise<TokenCDFExtent<WidgetToken> | null> {
+      const bytePrefix = widgetPrefixToBytes(prefix);
+      return lookupSpecificToken(byteLevelModel, bytePrefix, specificToken);
+    },
   };
 }

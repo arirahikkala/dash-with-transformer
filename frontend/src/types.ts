@@ -80,34 +80,44 @@ export function asUnnormalized<P>(
 }
 
 /**
- * Given a prefix and visibility constraints, finds the matching entries from the next-token distribution.
+ * A view into the cumulative distribution function of a language model's
+ * next-token distribution at a given prefix.
+ *
+ * Two operations:
+ * - `slice`: stream entries that overlap a CDF range and meet a minimum
+ *   probability threshold.
+ * - `token`: look up a single token's extent with minimal computation.
  *
  * Implementations must ensure that:
  * - token extents do not overlap
- * - token extents don't vary between different calls with the same prefix; only the ordering and presence may change
+ * - token extents don't vary between different calls with the same prefix;
+ *   only the ordering and presence may change
  * - each token yielded per call is unique
  * - tokens are yielded as soon as they can be (don't wait for earlier tokens)
  *
  * Tokens may be yielded in any order.
  *
- * @param prefix        - The token prefix.
- * @param rangeStart    - Only return entries whose half-open extent [start, end)
- *                        overlaps the point or range [rangeStart, rangeEnd].
- * @param rangeEnd      - Inclusive upper bound of the query range.
- * @param minProb       - Only return entries with (end − start) ≥ minProb.
- * @param specificToken - If set, return only this token's extent (ignoring
- *                        range/size filters) with minimal computation.
- *
  * @template P - The type of the prefix (e.g. `string`, `readonly number[]`).
  * @template T - The type of each next-token.
  */
-export type CDFView<P, T> = (
-  prefix: P,
-  rangeStart: number,
-  rangeEnd: number,
-  minProb: number,
-  specificToken?: T,
-) => AsyncIterable<TokenCDFExtent<T>>;
+export interface CDFView<P, T> {
+  /**
+   * Stream entries whose half-open extent [start, end) overlaps
+   * [rangeStart, rangeEnd] and whose probability (end − start) ≥ minProb.
+   */
+  slice(
+    prefix: P,
+    rangeStart: number,
+    rangeEnd: number,
+    minProb: number,
+  ): AsyncIterable<TokenCDFExtent<T>>;
+
+  /**
+   * Look up a single token's cumulative extent.
+   * Returns null if the token has zero probability.
+   */
+  token(prefix: P, specificToken: T): Promise<TokenCDFExtent<T> | null>;
+}
 
 /** Cursor: a discrete prefix plus a continuous adjustment. */
 export interface Cursor<T> {

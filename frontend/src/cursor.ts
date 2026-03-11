@@ -33,7 +33,7 @@ export async function normalizeCursor<T>(
   // --- Ascent: walk up the tree while the cursor is outside the current square ---
   while ((x < 0 || x >= 1 || y < 0 || y >= 1) && prefix.length > 0) {
     const lastToken = prefix.pop()!;
-    const tokenResult = await first(model(prefix, 0, 1, 0, lastToken));
+    const tokenResult = await model.token(prefix, lastToken);
     if (signal?.aborted) return null;
 
     let cumBefore = 0;
@@ -58,7 +58,7 @@ export async function normalizeCursor<T>(
 
   // --- Descent: walk down into the smallest containing child ---
   for (;;) {
-    const entry = await first(model(prefix, y, y, 1 - x));
+    const entry = await first(model.slice(prefix, y, y, 1 - x));
     if (signal?.aborted) return null;
     if (!entry) break;
 

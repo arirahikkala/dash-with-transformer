@@ -6,7 +6,6 @@ import {
   asNormalized,
 } from "./types";
 import { normalizeCursor } from "./cursor";
-import { first } from "./async-iterables";
 import { adaptModel } from "./models";
 
 // ---------------------------------------------------------------------------
@@ -74,7 +73,7 @@ async function cursorToGlobal<T>(
   for (let i = 0; i < state.prefix.length; i++) {
     const parentPrefix = state.prefix.slice(0, i);
     const token = state.prefix[i];
-    const tokenResult = await first(model(parentPrefix, 0, 1, 0, token));
+    const tokenResult = await model.token(parentPrefix, token);
 
     let cumBefore = 0;
     let prob = 0;
@@ -454,30 +453,29 @@ describe("normalizeCursor", () => {
       type Tok = { id: number };
       const tok1: Tok = { id: 1 };
       const tok2: Tok = { id: 2 };
-      const objModel: CDFView<readonly Tok[], Tok> = async function* (
-        _prefix,
-        rangeStart,
-        rangeEnd,
-        minProb,
-        specificToken?,
-      ) {
-        const entries: TokenCDFExtent<Tok>[] = [
-          { token: tok1, start: 0, end: 0.5 },
-          { token: tok2, start: 0.5, end: 1 },
-        ];
-        for (const entry of entries) {
-          if (specificToken !== undefined) {
-            if (entry.token === specificToken) {
-              yield entry;
-              return;
-            }
-            continue;
+      const objModel: CDFView<readonly Tok[], Tok> = {
+        async *slice(_prefix, rangeStart, rangeEnd, minProb) {
+          const entries: TokenCDFExtent<Tok>[] = [
+            { token: tok1, start: 0, end: 0.5 },
+            { token: tok2, start: 0.5, end: 1 },
+          ];
+          for (const entry of entries) {
+            const p = entry.end - entry.start;
+            if (entry.end <= rangeStart || entry.start > rangeEnd) continue;
+            if (p < minProb) continue;
+            yield entry;
           }
-          const p = entry.end - entry.start;
-          if (entry.end <= rangeStart || entry.start > rangeEnd) continue;
-          if (p < minProb) continue;
-          yield entry;
-        }
+        },
+        async token(_prefix, specificToken) {
+          const entries: TokenCDFExtent<Tok>[] = [
+            { token: tok1, start: 0, end: 0.5 },
+            { token: tok2, start: 0.5, end: 1 },
+          ];
+          for (const entry of entries) {
+            if (entry.token === specificToken) return entry;
+          }
+          return null;
+        },
       };
 
       // prefix=[tok1], y=1.1 → ascend, enter tok2.

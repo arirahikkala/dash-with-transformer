@@ -11,7 +11,6 @@
  */
 
 import type { CDFView, Cursor, SceneNode, Scene } from "./types";
-import { first } from "./async-iterables";
 
 // ---------------------------------------------------------------------------
 // Phase 2: Ascend to scene root
@@ -47,7 +46,7 @@ async function ascendToSceneRoot<T>(
 
   while (mutablePrefix.length > 0) {
     const lastToken = mutablePrefix.pop()!;
-    const tokenResult = await first(model(mutablePrefix, 0, 1, 0, lastToken));
+    const tokenResult = await model.token(mutablePrefix, lastToken);
 
     let cumBefore = 0;
     let prob = 0;
@@ -108,7 +107,12 @@ async function* buildChildren<T>(
   const rangeEnd = (1 - offset) / scale;
   const minProb = minAbsProb / absProb;
 
-  for await (const entry of model(prefix, rangeStart, rangeEnd, minProb)) {
+  for await (const entry of model.slice(
+    prefix,
+    rangeStart,
+    rangeEnd,
+    minProb,
+  )) {
     const p = entry.end - entry.start;
     const y0 = offset + entry.start * scale;
     const y1 = offset + entry.end * scale;
