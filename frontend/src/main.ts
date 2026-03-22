@@ -237,23 +237,42 @@ async function main() {
   let mouseX = 0;
   let mouseY = 0;
 
-  function updateMousePos(e: MouseEvent) {
+  function updatePointerPos(clientX: number, clientY: number) {
     const rect = nodeCanvas.getBoundingClientRect();
     // Scale from CSS coords to canvas backing-store coords
-    mouseX = (e.clientX - rect.left) * (nodeCanvas.width / rect.width);
-    mouseY = (e.clientY - rect.top) * (nodeCanvas.height / rect.height);
+    mouseX = (clientX - rect.left) * (nodeCanvas.width / rect.width);
+    mouseY = (clientY - rect.top) * (nodeCanvas.height / rect.height);
   }
 
   nodeCanvas.addEventListener("mousedown", (e) => {
     mouseDown = true;
-    updateMousePos(e);
+    updatePointerPos(e.clientX, e.clientY);
   });
 
   nodeCanvas.addEventListener("mousemove", (e) => {
-    updateMousePos(e);
+    updatePointerPos(e.clientX, e.clientY);
   });
 
   window.addEventListener("mouseup", () => {
+    mouseDown = false;
+  });
+
+  nodeCanvas.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    mouseDown = true;
+    updatePointerPos(e.touches[0].clientX, e.touches[0].clientY);
+  });
+
+  nodeCanvas.addEventListener("touchmove", (e) => {
+    e.preventDefault();
+    updatePointerPos(e.touches[0].clientX, e.touches[0].clientY);
+  });
+
+  window.addEventListener("touchend", () => {
+    mouseDown = false;
+  });
+
+  window.addEventListener("touchcancel", () => {
     mouseDown = false;
   });
 
