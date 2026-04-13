@@ -129,22 +129,22 @@ export function createBackendClient(backendUrl: string): BackendClient {
     prefix: number[],
     minProb: number,
   ): Promise<readonly number[]> {
-    const cached = cache.get(prefix);
-    if (cached) return cached;
-    const promise = new Promise<readonly number[]>((resolve, reject) => {
-      pending.push({
-        prefix,
-        minProb: minProb,
-        resolve,
-        reject,
-      });
-      if (!flushScheduled) {
-        flushScheduled = true;
-        queueMicrotask(flush);
-      }
-    });
-    cache.set(prefix, promise);
-    return promise;
+    return cache.getOrSet(
+      prefix,
+      () =>
+        new Promise<readonly number[]>((resolve, reject) => {
+          pending.push({
+            prefix,
+            minProb: minProb,
+            resolve,
+            reject,
+          });
+          if (!flushScheduled) {
+            flushScheduled = true;
+            queueMicrotask(flush);
+          }
+        }),
+    );
   }
 
   return { predictBytes };
