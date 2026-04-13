@@ -48,6 +48,28 @@ export async function* mergeAsyncIterables<T>(
   }
 }
 
+/**
+ * Eagerly start an async iterable by pulling its first value now, and return
+ * a new iterable that re-emits that value followed by the rest.  Useful for
+ * overlapping the iterable's first round-trip with other concurrent work,
+ * since async generators don't run their body until `.next()` is called.
+ */
+export function primeAsyncIterable<T>(
+  iter: AsyncIterator<T>,
+): AsyncGenerator<T> {
+  const first = iter.next();
+  return (async function* () {
+    const r = await first;
+    if (r.done) return;
+    yield r.value;
+    while (true) {
+      const n = await iter.next();
+      if (n.done) return;
+      yield n.value;
+    }
+  })();
+}
+
 /** Extract the first element from an async iterable, or undefined if empty. */
 export async function first<T>(iter: AsyncIterable<T>): Promise<T | undefined> {
   for await (const item of iter) {

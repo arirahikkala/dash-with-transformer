@@ -9,7 +9,7 @@
  * `tokenKey` function for equality comparison (since tokens are typically
  * structural objects).
  */
-import { mergeAsyncIterables } from "./async-iterables";
+import { mergeAsyncIterables, primeAsyncIterable } from "./async-iterables";
 import type { CDFView, TokenCDFExtent } from "./types";
 
 /**
@@ -163,8 +163,9 @@ export function withCollation<P, T>(
   return {
     async *slice(prefix, rangeStart, rangeEnd, minProb) {
       // Kick off the core natural-range slice in parallel with resolve().
-      const coreIter = inner.slice(prefix, rangeStart, rangeEnd, minProb);
-      const firstCore = coreIter.next();
+      const core = primeAsyncIterable(
+        inner.slice(prefix, rangeStart, rangeEnd, minProb),
+      );
 
       const { moved, predExtent, totalMovedMass } = await resolve(prefix);
 
@@ -184,16 +185,9 @@ export function withCollation<P, T>(
       const leftLo = Math.max(0, rangeStart - totalMovedMass);
       const rightHi = Math.min(1, rangeEnd + totalMovedMass);
 
-      async function* primedCore() {
-        const r = await firstCore;
-        if (r.done) return;
-        yield r.value;
-        yield* coreIter;
-      }
-
       const seen = new Set<string>();
       for await (const ext of mergeAsyncIterables([
-        primedCore(),
+        core,
         inner.slice(prefix, leftLo, rangeStart, minProb),
         inner.slice(prefix, rangeEnd, rightHi, minProb),
       ])) {
