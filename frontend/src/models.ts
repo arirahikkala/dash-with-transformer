@@ -543,6 +543,8 @@ export function fromByteLevelModel(
       rangeEnd: number,
       minProb: number,
     ) {
+      if (rangeEnd < rangeStart) return;
+
       const bytePrefix = widgetPrefixToBytes(prefix);
 
       // 1. First-byte distribution (1 model call).

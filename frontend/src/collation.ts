@@ -69,7 +69,6 @@ export function withCollation<P, T>(
   async function resolve(prefix: P): Promise<{
     moved: { rule: CollationRule<T>; extent: TokenCDFExtent<T> }[];
     predExtent: Map<string, TokenCDFExtent<T>>;
-    totalMovedMass: number;
   }> {
     const extents = await Promise.all(
       tokensToQuery.map((t) => inner.token(prefix, t)),
@@ -81,16 +80,14 @@ export function withCollation<P, T>(
     }
 
     const moved: { rule: CollationRule<T>; extent: TokenCDFExtent<T> }[] = [];
-    let totalMovedMass = 0;
     for (const r of rules) {
       const me = extentByKey.get(tokenKey(r.token));
       const pe = extentByKey.get(tokenKey(r.after));
       if (!me || !pe) continue; // rule inactive: missing token or predecessor
       moved.push({ rule: r, extent: me });
-      totalMovedMass += me.end - me.start;
     }
 
-    return { moved, predExtent: extentByKey, totalMovedMass };
+    return { moved, predExtent: extentByKey };
   }
 
   /**
@@ -167,7 +164,7 @@ export function withCollation<P, T>(
         inner.slice(prefix, rangeStart, rangeEnd, minProb),
       );
 
-      const { moved, predExtent, totalMovedMass } = await resolve(prefix);
+      const { moved, predExtent } = await resolve(prefix);
 
       // Emit moved tokens at their collated positions.
       for (const mc of collatedMoved(moved, predExtent)) {
@@ -178,12 +175,24 @@ export function withCollation<P, T>(
 
       const activeMovedKeys = new Set(moved.map((m) => tokenKey(m.rule.token)));
 
-      // Widen by the total moved mass on each side.  A stayed token's
-      // collated position differs from its natural position by at most
-      // ±totalMovedMass, so the two wings cover every token that could
-      // land in [rangeStart, rangeEnd] after shifting.
-      const leftLo = Math.max(0, rangeStart - totalMovedMass);
-      const rightHi = Math.min(1, rangeEnd + totalMovedMass);
+      // Bound how far a stayed token could shift into [rangeStart, rangeEnd]
+      // from outside.  shiftAtNatural sums ±|m| only over m's "in flight" at
+      // s — so only leftward-moving m's with pred.start < rangeStart can push
+      // a stayed token rightward into range, and only rightward-moving m's
+      // with pred.start > rangeEnd can pull one leftward into range.
+      let leftExtend = 0;
+      let rightExtend = 0;
+      for (const m of moved) {
+        const size = m.extent.end - m.extent.start;
+        const pred = predExtent.get(tokenKey(m.rule.after))!;
+        if (pred.start < m.extent.start) {
+          if (pred.start < rangeStart) leftExtend += size;
+        } else if (pred.start >= m.extent.end) {
+          if (pred.start > rangeEnd) rightExtend += size;
+        }
+      }
+      const leftLo = Math.max(0, rangeStart - leftExtend);
+      const rightHi = Math.min(1, rangeEnd + rightExtend);
 
       const seen = new Set<string>();
       for await (const ext of mergeAsyncIterables([
