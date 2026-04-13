@@ -395,6 +395,92 @@ describe("withCollation", () => {
     }
   });
 
+  it("moves a token from an earlier natural position to a later collated slot", async () => {
+    // Natural: a, å, b, c, d.  Rule: å after c.
+    // Collated: a, b, c, å, d.
+    const inner = makeCDF({
+      "": [
+        { token: "a", prob: 0.1 },
+        { token: "å", prob: 0.2 },
+        { token: "b", prob: 0.3 },
+        { token: "c", prob: 0.2 },
+        { token: "d", prob: 0.2 },
+      ],
+    });
+    const view = withCollation(inner, [{ token: "å", after: "c" }], keyOf);
+    const got = await collect(view.slice("", 0, 1, 0));
+    const ordered = [...got].sort((a, b) => a.start - b.start);
+    expect(ordered.map((e) => e.token)).toEqual(["a", "b", "c", "å", "d"]);
+    expectContiguous(ordered, 1);
+
+    const find = (t: string) => ordered.find((e) => e.token === t)!;
+    // a is before å naturally and before c collated → no shift.
+    expect(near(find("a").start, 0)).toBe(true);
+    expect(near(find("a").end, 0.1)).toBe(true);
+    // b and c have å removed from before them (−0.2) and no insertions
+    // before them collated → shift = −0.2.
+    expect(near(find("b").start, 0.1)).toBe(true);
+    expect(near(find("b").end, 0.4)).toBe(true);
+    expect(near(find("c").start, 0.4)).toBe(true);
+    expect(near(find("c").end, 0.6)).toBe(true);
+    // å is inserted right after c's collated end.
+    expect(near(find("å").start, 0.6)).toBe(true);
+    expect(near(find("å").end, 0.8)).toBe(true);
+    // d had å removed from before (−0.2) and å re-inserted before (+0.2)
+    // → net shift 0.
+    expect(near(find("d").start, 0.8)).toBe(true);
+    expect(near(find("d").end, 1)).toBe(true);
+
+    // token() should agree on every position above.
+    for (const t of ["a", "b", "c", "å", "d"]) {
+      const byToken = await view.token("", t);
+      expect(byToken).not.toBeNull();
+      expect(near(byToken!.start, find(t).start)).toBe(true);
+      expect(near(byToken!.end, find(t).end)).toBe(true);
+    }
+  });
+
+  it("handles one earlier-move and one later-move in the same config", async () => {
+    // Natural: a, ö, b, c, ä, d.
+    // Rules: ö after c (later), ä after a (earlier).
+    // Collated: a, ä, b, c, ö, d.
+    const inner = makeCDF({
+      "": [
+        { token: "a", prob: 0.1 },
+        { token: "ö", prob: 0.1 },
+        { token: "b", prob: 0.2 },
+        { token: "c", prob: 0.2 },
+        { token: "ä", prob: 0.2 },
+        { token: "d", prob: 0.2 },
+      ],
+    });
+    const view = withCollation(
+      inner,
+      [
+        { token: "ö", after: "c" },
+        { token: "ä", after: "a" },
+      ],
+      keyOf,
+    );
+    const got = await collect(view.slice("", 0, 1, 0));
+    const ordered = [...got].sort((a, b) => a.start - b.start);
+    expect(ordered.map((e) => e.token)).toEqual(["a", "ä", "b", "c", "ö", "d"]);
+    expectContiguous(ordered, 1);
+
+    const find = (t: string) => ordered.find((e) => e.token === t)!;
+    expect(near(find("a").end, 0.1)).toBe(true);
+    expect(near(find("ä").start, 0.1)).toBe(true);
+    expect(near(find("ä").end, 0.3)).toBe(true);
+    expect(near(find("b").start, 0.3)).toBe(true);
+    expect(near(find("b").end, 0.5)).toBe(true);
+    expect(near(find("c").start, 0.5)).toBe(true);
+    expect(near(find("c").end, 0.7)).toBe(true);
+    expect(near(find("ö").start, 0.7)).toBe(true);
+    expect(near(find("ö").end, 0.8)).toBe(true);
+    expect(near(find("d").start, 0.8)).toBe(true);
+    expect(near(find("d").end, 1)).toBe(true);
+  });
+
   it("throws on duplicate rules for the same moved token", () => {
     const inner = makeCDF({ "": [{ token: "a", prob: 1 }] });
     expect(() =>
