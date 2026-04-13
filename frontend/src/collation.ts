@@ -9,6 +9,7 @@
  * `tokenKey` function for equality comparison (since tokens are typically
  * structural objects).
  */
+import { mergeAsyncIterables } from "./async-iterables";
 import type { CDFView, TokenCDFExtent } from "./types";
 
 /**
@@ -161,38 +162,50 @@ export function withCollation<P, T>(
 
   return {
     async *slice(prefix, rangeStart, rangeEnd, minProb) {
+      // Kick off the core natural-range slice in parallel with resolve().
+      const coreIter = inner.slice(prefix, rangeStart, rangeEnd, minProb);
+      const firstCore = coreIter.next();
+
       const { moved, predExtent, totalMovedMass } = await resolve(prefix);
 
+      // Emit moved tokens at their collated positions.
+      for (const mc of collatedMoved(moved, predExtent)) {
+        if (mc.end <= rangeStart || mc.start > rangeEnd) continue;
+        if (mc.end - mc.start < minProb) continue;
+        yield mc;
+      }
+
       const activeMovedKeys = new Set(moved.map((m) => tokenKey(m.rule.token)));
-      const movedCollated = collatedMoved(moved, predExtent);
 
-      // Widen the natural range by the total moved mass.  A stayed token's
+      // Widen by the total moved mass on each side.  A stayed token's
       // collated position differs from its natural position by at most
-      // ±totalMovedMass, so this over-query covers every token that could
+      // ±totalMovedMass, so the two wings cover every token that could
       // land in [rangeStart, rangeEnd] after shifting.
-      const naturalLo = Math.max(0, rangeStart - totalMovedMass);
-      const naturalHi = Math.min(1, rangeEnd + totalMovedMass);
+      const leftLo = Math.max(0, rangeStart - totalMovedMass);
+      const rightHi = Math.min(1, rangeEnd + totalMovedMass);
 
-      // Stream stayed tokens, transforming positions and re-filtering.
-      for await (const ext of inner.slice(
-        prefix,
-        naturalLo,
-        naturalHi,
-        minProb,
-      )) {
-        if (activeMovedKeys.has(tokenKey(ext.token))) continue;
+      async function* primedCore() {
+        const r = await firstCore;
+        if (r.done) return;
+        yield r.value;
+        yield* coreIter;
+      }
+
+      const seen = new Set<string>();
+      for await (const ext of mergeAsyncIterables([
+        primedCore(),
+        inner.slice(prefix, leftLo, rangeStart, minProb),
+        inner.slice(prefix, rangeEnd, rightHi, minProb),
+      ])) {
+        const k = tokenKey(ext.token);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        if (activeMovedKeys.has(k)) continue;
         const shift = shiftAtNatural(ext.start, moved, predExtent);
         const s = ext.start + shift;
         const e = ext.end + shift;
         if (e <= rangeStart || s > rangeEnd) continue;
         yield { token: ext.token, start: s, end: e };
-      }
-
-      // Emit moved tokens at their collated positions.
-      for (const mc of movedCollated) {
-        if (mc.end <= rangeStart || mc.start > rangeEnd) continue;
-        if (mc.end - mc.start < minProb) continue;
-        yield mc;
       }
     },
 
