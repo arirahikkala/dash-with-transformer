@@ -55,8 +55,9 @@ export async function* mergeAsyncIterables<T>(
  * since async generators don't run their body until `.next()` is called.
  */
 export function primeAsyncIterable<T>(
-  iter: AsyncIterator<T>,
+  iterable: AsyncIterable<T>,
 ): AsyncGenerator<T> {
+  const iter = iterable[Symbol.asyncIterator]();
   const first = iter.next();
   return (async function* () {
     const r = await first;

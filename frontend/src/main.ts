@@ -21,6 +21,7 @@ import type { ByteLevelModel } from "./models";
 import { normalizeCursor } from "./cursor";
 import { buildScene } from "./scene";
 import { renderScene } from "./render";
+import { withCollation, type CollationRule } from "./collation";
 
 import { createCachedLSTMPredictor } from "./lstm/lstm";
 
@@ -66,6 +67,41 @@ function encodePrefixWithSpecialTokens(
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
+
+function cp(ch: string): WidgetToken {
+  return { type: "codepoint", codepoint: ch.codePointAt(0)! };
+}
+
+function widgetTokenKey(t: WidgetToken): string {
+  return t.type === "codepoint" ? `c${t.codepoint}` : `s${t.index}`;
+}
+
+/**
+ * Example alphabet-collation presets.  Rules are best-effort hand-written:
+ * each one moves a diacritic/special letter to sit right after a familiar
+ * base letter (German: umlauts by base vowel; Finnish: å/ä/ö at end after z).
+ */
+const COLLATION_PRESETS: Record<string, readonly CollationRule<WidgetToken>[]> =
+  {
+    english: [],
+    german: [
+      { token: cp("ä"), after: cp("a") },
+      { token: cp("ö"), after: cp("o") },
+      { token: cp("ü"), after: cp("u") },
+      { token: cp("ß"), after: cp("s") },
+      { token: cp("Ä"), after: cp("A") },
+      { token: cp("Ö"), after: cp("O") },
+      { token: cp("Ü"), after: cp("U") },
+    ],
+    finnish: [
+      { token: cp("å"), after: cp("z") },
+      { token: cp("ä"), after: cp("z") },
+      { token: cp("ö"), after: cp("z") },
+      { token: cp("Å"), after: cp("Z") },
+      { token: cp("Ä"), after: cp("Z") },
+      { token: cp("Ö"), after: cp("Z") },
+    ],
+  };
 
 /**
  * How many window-heights per second the cursor moves when the mouse
@@ -151,7 +187,7 @@ async function main() {
   // passMinProb threads minProb from fromByteLevelModel through to remoteBLM.
   // The adapter closes over mutable sliderValue and remoteBLM so that slider
   // changes and backend reconnects are picked up automatically.
-  const model: CDFView<readonly WidgetToken[], WidgetToken> =
+  const baseModel: CDFView<readonly WidgetToken[], WidgetToken> =
     fromByteLevelModel(
       passMinProb((remoteLM) => {
         const cleanRemote = normalize(
@@ -167,6 +203,30 @@ async function main() {
       })((prefix, minProb) => remoteBLM(prefix, minProb)),
       specialTokens,
     );
+
+  // Mutable CDFView box: buildScene reads `model`, we swap the inner view
+  // whenever the collation dropdown changes.
+  let innerModel: CDFView<readonly WidgetToken[], WidgetToken> = baseModel;
+  const model: CDFView<readonly WidgetToken[], WidgetToken> = {
+    slice: (prefix, rs, re, mp) => innerModel.slice(prefix, rs, re, mp),
+    token: (prefix, t) => innerModel.token(prefix, t),
+  };
+
+  const collationSelect = document.getElementById(
+    "collation-select",
+  ) as HTMLSelectElement;
+  function applyCollation(name: string) {
+    const rules = COLLATION_PRESETS[name] ?? [];
+    innerModel =
+      rules.length === 0
+        ? baseModel
+        : withCollation(baseModel, rules, widgetTokenKey);
+  }
+  applyCollation(collationSelect.value);
+  collationSelect.addEventListener("change", () => {
+    applyCollation(collationSelect.value);
+    rerender();
+  });
 
   // --- Hash ---
   function updateHash() {
